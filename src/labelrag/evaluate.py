@@ -40,7 +40,7 @@ from typing import Any
 import numpy as np
 
 from labelrag import answer as answering
-from labelrag import config, questions
+from labelrag import config, fetch, questions
 from labelrag.client import CachedCohere, stamp, utc_now
 from labelrag.retrieve import TOP, Retriever
 
@@ -96,6 +96,23 @@ def gold_rank(ids: list[str], chunks: dict[str, dict[str, Any]], gold: set) -> i
     return None
 
 
+def sibling_rank(
+    ids: list[str], chunks: dict[str, dict[str, Any]], gold: set, ingredients: dict[str, set[str]]
+) -> int | None:
+    """1-based rank of the first chunk from a sibling: a label outside gold that shares an
+    active ingredient with a gold label, in one of the gold sections (Zepbound's indications
+    for a Mounjaro question). None if no sibling chunk was retrieved."""
+    gold_labels = {set_id for set_id, _ in gold}
+    gold_sections = {section for _, section in gold}
+    shared = set().union(*(ingredients.get(set_id, set()) for set_id in gold_labels))
+    for rank, cid in enumerate(ids, start=1):
+        c = chunks[cid]
+        if c["set_id"] not in gold_labels and c["section"] in gold_sections:
+            if ingredients.get(c["set_id"], set()) & shared:
+                return rank
+    return None
+
+
 def auto_grades(q: dict[str, Any], ans: answering.Answer, chunks: dict[str, Any]) -> dict[str, Any]:
     if not q["answerable"]:
         return {}
@@ -115,8 +132,13 @@ def auto_grades(q: dict[str, Any], ans: answering.Answer, chunks: dict[str, Any]
 
 
 def run_questions(
-    qs: list[dict[str, Any]], retriever: Retriever, client: CachedCohere, progress=print
+    qs: list[dict[str, Any]],
+    retriever: Retriever,
+    client: CachedCohere,
+    ingredients: dict[str, set[str]] | None = None,
+    progress=print,
 ) -> list[dict[str, Any]]:
+    ingredients = ingredients or {}
     rows = []
     for q in qs:
         gold = gold_set(q)
@@ -135,6 +157,7 @@ def run_questions(
             timings["generate"] = ans.latency_ms
             timings["end_to_end"] = sum(timings.values())
             rank = gold_rank(ids, retriever.chunks, gold) if gold else None
+            sibling = sibling_rank(ids, retriever.chunks, gold, ingredients) if gold else None
             rows.append(
                 {
                     "id": q["id"],
@@ -145,6 +168,7 @@ def run_questions(
                     "retrieved": ids,
                     "scores": scores,
                     "gold_rank": rank,
+                    "sibling_rank": sibling,
                     "context_ids": ans.document_ids,
                     "answer": ans.text,
                     "declined": ans.declined,
@@ -238,6 +262,11 @@ def summarize(
     def correct(r):
         return answer_correct(r, hand)[0]
 
+    def sibling_first(r) -> bool:
+        """A sibling label's chunk made the top 5 ahead of every gold chunk."""
+        sibling, gold = r.get("sibling_rank"), r["gold_rank"]
+        return sibling is not None and sibling <= 5 and (gold is None or sibling < gold)
+
     flags: dict[str, dict[str, list[bool]]] = {}
     metrics: dict[str, Any] = {}
     sources = {answer_correct(by[(i, c)], hand)[1] for i in answerable for c in CONFIGS}
@@ -261,6 +290,9 @@ def summarize(
             "context_contains_answer": rate([r["grades"]["context_contains_answer"] for r in rs]),
             "answerable_declined": rate([r["declined"] for r in rs]),
             "unanswerable_declined": rate([by[(i, c)]["declined"] for i in unanswerable]),
+            "sibling_above_gold_in_top5": rate(
+                [sibling_first(r) for r in rs if "near_duplicate" in r["tags"]]
+            ),
         }
 
     def differ(metric: str) -> dict[str, list[str]]:
@@ -358,6 +390,11 @@ def markdown(summary: dict[str, Any]) -> str:
         table_row("Citations that contain the answer", "citations_contain_answer"),
         table_row("Unanswerable questions declined", "unanswerable_declined"),
         table_row("Answerable questions wrongly declined", "answerable_declined"),
+        "",
+        "Near-duplicate questions where a sibling label's copy of a gold section ranked inside "
+        "the top 5 and above every gold chunk (a Zepbound chunk ahead of Mounjaro's, say): "
+        f"{fmt(m['embed']['sibling_above_gold_in_top5'])} with embedding only, "
+        f"{fmt(m['rerank']['sibling_above_gold_in_top5'])} with rerank.",
         "",
         "Citations that contain the answer counts the answers that weren't declined, and asks "
         "whether the cited chunks contain every key fact; an answer that cites nothing counts "
@@ -497,7 +534,11 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
     client = client or CachedCohere(max_new_calls=args.max_calls)
     retriever = Retriever.load(client)
     print(f"Running {len(qs)} questions, two configurations each:")
-    rows = run_questions(qs, retriever, client)
+    ingredients = {
+        row["set_id"]: questions.ingredient_words(row["generic_name"])
+        for row in fetch.read_manifest(config.MANIFEST)
+    }
+    rows = run_questions(qs, retriever, client, ingredients)
 
     run_dir = config.RESULTS_DIR / args.run
     run_dir.mkdir(parents=True, exist_ok=True)

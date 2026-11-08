@@ -62,6 +62,7 @@ def world(tmp_path, monkeypatch):
             "gold": gold("Avalide", "dosage_and_administration"),
             "answer": "...",
             "key_facts": [section_text("Avalide", "dosage_and_administration")[30:70]],
+            "tags": ["near_duplicate"],  # Avapro, also irbesartan, is the sibling
         },
         {
             "id": "q02",
@@ -150,10 +151,32 @@ def test_summary_counts_match_the_rows(world):
         hits = sum(r["gold_rank"] is not None and r["gold_rank"] <= 5 for r in mine)
         assert summary["metrics"][c]["hit@5"] == {"count": hits, "n": 2, "rate": hits / 2}
         assert summary["metrics"][c]["unanswerable_declined"]["count"] == 1
-    assert set(summary["by_tag"]) == {"full_text", "(untagged)"}
+    assert set(summary["by_tag"]) == {"full_text", "near_duplicate", "(untagged)"}
     assert "| Right section in the top 5 (hit@5) |" in (world[3] / "summary.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_sibling_ranks_measure_near_duplicate_confusion(world):
+    rows, summary = run(world)
+    chunks = world[2]
+    qs = {q["id"]: q for q in evaluate.load_questions()}
+    rows_csv = list(csv.DictReader(config.MANIFEST.open(newline="", encoding="utf-8")))
+    ingredients = {
+        r["set_id"]: evaluate.questions.ingredient_words(r["generic_name"]) for r in rows_csv
+    }
+    for r in rows:
+        if r["answerable"]:
+            gold = evaluate.gold_set(qs[r["id"]])
+            assert r["sibling_rank"] == evaluate.sibling_rank(
+                r["retrieved"], chunks, gold, ingredients
+            )
+    q01 = [r for r in rows if r["id"] == "q01"]
+    sibling = chunks[q01[0]["retrieved"][q01[0]["sibling_rank"] - 1]]
+    assert sibling["brand_names"] == "Avapro"
+    assert sibling["section"] == "dosage_and_administration"
+    for c in ("embed", "rerank"):
+        assert summary["metrics"][c]["sibling_above_gold_in_top5"]["n"] == 1  # q01 only
 
 
 def test_rerunning_makes_no_calls_and_gives_the_same_numbers(world):
