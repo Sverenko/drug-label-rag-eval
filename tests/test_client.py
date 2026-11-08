@@ -1,74 +1,14 @@
 from datetime import UTC, datetime
-from types import SimpleNamespace as NS
 
 import numpy as np
 import pytest
+from fakes import ApiFailure, FakeClock, FakeSDK
 
 from labelrag import config, usage
 from labelrag.client import BudgetError, CachedCohere
 
 NOW = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
 QUESTION = [{"role": "user", "content": "Q?"}]
-
-
-class FakeClock:
-    """A clock that only moves when something sleeps or a fake call takes time."""
-
-    def __init__(self):
-        self.t = 1000.0
-        self.slept: list[float] = []
-
-    def __call__(self) -> float:
-        return self.t
-
-    def sleep(self, seconds: float) -> None:
-        self.slept.append(seconds)
-        self.t += seconds
-
-
-class ApiFailure(Exception):
-    """Shaped like cohere's ApiError: a status code and response headers."""
-
-    def __init__(self, status_code, headers=None):
-        super().__init__(f"HTTP {status_code}")
-        self.status_code = status_code
-        self.headers = headers or {}
-
-
-class FakeSDK:
-    """Stands in for cohere.ClientV2. Each call takes 250 ms on the fake clock."""
-
-    def __init__(self, clock, failures=()):
-        self.clock = clock
-        self.failures = list(failures)
-        self.requests: list[tuple[str, dict]] = []
-        self.started: list[float] = []
-
-    def _begin(self, endpoint, **kwargs):
-        self.requests.append((endpoint, kwargs))
-        self.started.append(self.clock.t)
-        self.clock.t += 0.25
-        if self.failures:
-            raise self.failures.pop(0)
-
-    def embed(self, *, model, input_type, texts, embedding_types, output_dimension):
-        self._begin("embed", model=model, input_type=input_type, texts=list(texts))
-        padding = [0.0] * (output_dimension - 2)
-        rows = [[float(len(t)), float(sum(map(ord, t)))] + padding for t in texts]
-        return NS(embeddings=NS(float_=rows), meta=None)
-
-    def rerank(self, *, model, query, documents, top_n=None):
-        self._begin("rerank", model=model, query=query, documents=list(documents), top_n=top_n)
-        order = sorted(range(len(documents)), key=lambda i: -len(documents[i]))[:top_n]
-        results = [NS(index=i, relevance_score=1 / (rank + 1)) for rank, i in enumerate(order)]
-        return NS(results=results, meta=None)
-
-    def chat(self, *, model, messages, documents=None, **params):
-        self._begin("chat", model=model, messages=messages, documents=documents, **params)
-        sources = [NS(id=documents[0].id)] if documents else []
-        citation = NS(start=4, end=10, text="answer", sources=sources)
-        message = NS(content=[NS(type="text", text="The answer.")], citations=[citation])
-        return NS(message=message, finish_reason="COMPLETE", usage=None)
 
 
 @pytest.fixture
@@ -185,7 +125,7 @@ def test_chat_returns_text_and_cited_document_ids(make):
 def test_429s_back_off_and_every_attempt_is_logged(make, clock):
     client, _ = make(FakeSDK(clock, failures=[ApiFailure(429), ApiFailure(429)]))
     assert client.rerank("q", ["x"], model="rerank-pro").order == [0]
-    assert clock.slept == [2.0, 4.0]
+    assert clock.slept == [20.0, 40.0]  # rate limits are per minute, so the waits are long
     assert client.calls["rerank"] == 3
     rows = client.store.db.execute("SELECT outcome FROM calls ORDER BY id")
     assert [outcome for (outcome,) in rows] == ["rate_limited", "rate_limited", "ok"]
@@ -227,6 +167,15 @@ def test_embed_inputs_per_minute_are_limited(make, monkeypatch):
     client, sdk = make()
     embed(client, [f"t{i}" for i in range(192)])
     assert len(sdk.requests) == 2
+    assert sdk.started[1] - sdk.started[0] >= 60
+
+
+def test_tokens_per_minute_are_limited_across_endpoints(make, monkeypatch):
+    monkeypatch.setattr(config, "TOKENS_PER_MINUTE", 100)
+    monkeypatch.setattr(config, "CHARS_PER_TOKEN", 1)
+    client, sdk = make()
+    embed(client, ["a" * 60])
+    client.rerank("q", ["b" * 50], model="rerank-pro")  # 50 + 1 characters: has to wait
     assert sdk.started[1] - sdk.started[0] >= 60
 
 

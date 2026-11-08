@@ -23,6 +23,7 @@ SAMPLE_DIR = DATA_DIR / "sample"
 MANIFEST = DATA_DIR / "manifest.csv"
 CACHE_DIR = ROOT / ".cache"
 CACHE_DB = CACHE_DIR / "cohere.sqlite"
+PROMPTS_DIR = ROOT / "prompts"
 EVAL_DIR = ROOT / "eval"
 QUESTIONS_FILE = EVAL_DIR / "questions.jsonl"
 RESULTS_DIR = ROOT / "results"
@@ -38,6 +39,11 @@ MONTHLY_CALL_BUDGET = 1000
 EMBED_INPUTS_PER_MINUTE = 2000
 RERANK_CALLS_PER_MINUTE = 10
 CHAT_CALLS_PER_MINUTE = 20  # per model
+# Not on the rate-limits page; from a 429: "trial token rate limit exceeded, limit is
+# 100000 tokens per minute". Requests are estimated at CHARS_PER_TOKEN characters a token,
+# a cautious figure: label text measured about 5.
+TOKENS_PER_MINUTE = 100_000
+CHARS_PER_TOKEN = 4
 
 # Cohere models, checked against the trial key by `python -m labelrag.smoke`.
 # Embed Pro and Fast share one embedding space, so label sections are indexed once

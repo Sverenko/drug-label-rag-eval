@@ -37,6 +37,8 @@ KEY_VERSION = 1  # bump to invalidate every cache entry if the stored format cha
 EMBED_BATCH = 96  # most texts Cohere accepts in one embed call
 MAX_ATTEMPTS = 4
 MAX_BACKOFF_S = 60.0
+RATE_LIMIT_WAITS_S = (20.0, 40.0, 60.0)
+CHAT_OUTPUT_TOKENS = 1000  # allowance for the answer when estimating a chat call's tokens
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS embeddings (
@@ -168,13 +170,21 @@ def retryable(err: Exception) -> bool:
 
 
 def backoff(err: Exception, attempt: int) -> float:
-    """Seconds to wait before the next attempt: Retry-After if the server sent it, else doubling."""
+    """Seconds to wait before the next attempt: Retry-After if the server sent it; after a
+    429, 20, 40 and then 60 seconds, since the limits are per minute; otherwise doubling."""
     headers = getattr(err, "headers", None) or {}
     retry_after = headers.get("retry-after") or headers.get("Retry-After")
     try:
         return min(float(retry_after), MAX_BACKOFF_S)
     except (TypeError, ValueError):
-        return min(2.0**attempt, MAX_BACKOFF_S)
+        pass
+    if getattr(err, "status_code", None) == 429:
+        return RATE_LIMIT_WAITS_S[min(attempt, len(RATE_LIMIT_WAITS_S)) - 1]
+    return min(2.0**attempt, MAX_BACKOFF_S)
+
+
+def estimate_tokens(chars: int) -> int:
+    return chars // config.CHARS_PER_TOKEN + 1
 
 
 class RateLimiter:
@@ -352,6 +362,7 @@ class CachedCohere:
                 "embed",
                 model,
                 len(batch_texts),
+                estimate_tokens(sum(len(t) for t in batch_texts)),
                 partial(
                     self.sdk.embed,
                     model=model,
@@ -394,10 +405,13 @@ class CachedCohere:
             self.from_cache["rerank"] += 1
         else:
             extra = {} if top_n is None else {"top_n": top_n}
+            # Rerank bills the query once per document.
+            chars = sum(len(d) for d in documents) + len(documents) * len(query)
             resp, latency_ms = self._call(
                 "rerank",
                 model,
                 len(documents),
+                estimate_tokens(chars),
                 partial(self.sdk.rerank, model=model, query=query, documents=documents, **extra),
             )
             data = {
@@ -434,10 +448,14 @@ class CachedCohere:
             kwargs = dict(params)
             if documents:
                 kwargs["documents"] = [to_sdk_document(d) for d in documents]
+            chars = sum(len(m["content"]) for m in messages) + sum(
+                len(str(value)) for d in documents or [] for value in d.values()
+            )
             resp, latency_ms = self._call(
                 "chat",
                 model,
                 1,
+                estimate_tokens(chars) + CHAT_OUTPUT_TOKENS,
                 partial(
                     self.sdk.chat,
                     model=model,
@@ -476,13 +494,18 @@ class CachedCohere:
         )
 
     def _call(
-        self, endpoint: str, model: str, inputs: int, request: Callable[[], Any]
+        self, endpoint: str, model: str, inputs: int, tokens: int, request: Callable[[], Any]
     ) -> tuple[Any, float]:
-        """One live call: budget check, throttle, retries with backoff, a ledger row per attempt."""
+        """One live call: budget check, throttles (the endpoint's limit and the shared token
+        limit), retries with backoff, and a ledger row per attempt."""
         limiter, weight = self._limiter(endpoint, model, inputs)
+        if "tokens" not in self._limiters:
+            budget = int(config.TOKENS_PER_MINUTE * 0.9)  # headroom for estimation error
+            self._limiters["tokens"] = RateLimiter(budget, 60.0, self.clock, self.sleep)
         for attempt in range(1, MAX_ATTEMPTS + 1):
             self._check_budget()
             limiter.acquire(weight)
+            self._limiters["tokens"].acquire(tokens)
             start = self.clock()
             try:
                 resp = request()
