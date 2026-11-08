@@ -26,6 +26,16 @@ RESULTS_DIR = ROOT / "results"
 
 KEYS_PAGE = "https://dashboard.cohere.com/api-keys"
 
+# Cohere models, checked against the trial key by `python -m labelrag.smoke`.
+# Embed Pro and Fast share one embedding space, so label sections are indexed once
+# with Pro and questions are embedded with the faster model.
+EMBED_DOC_MODEL = "embed-v5.0-pro"
+EMBED_QUERY_MODEL = "embed-v5.0-fast"
+EMBED_DIMENSION = 2048  # the models' default; they also offer 256 to 1536
+RERANK_MODEL = "rerank-v5.0-pro"
+RERANK_MODEL_FAST = "rerank-v5.0-fast"
+CHAT_MODEL = "command-a-plus-05-2026"
+
 
 class MissingAPIKeyError(RuntimeError):
     """CO_API_KEY isn't set in the environment or in .env."""

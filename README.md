@@ -47,14 +47,14 @@ flowchart LR
     K --> R["Rerank to top 5"] --> G["Command: answer with citations"]
 ```
 
-<!-- Fill in once a smoke test confirms which model IDs the trial key serves. -->
-
 | Stage | Model |
 |---|---|
-| Embed label sections (once) | _TBD_ |
-| Embed questions | _TBD_ |
-| Rerank | _TBD_ |
-| Answer | _TBD_ |
+| Embed label sections (once) | `embed-v5.0-pro`, 2048 dimensions |
+| Embed questions | `embed-v5.0-fast`, which shares Pro's embedding space |
+| Rerank | `rerank-v5.0-pro` |
+| Answer | `command-a-plus-05-2026` |
+
+`python -m labelrag.smoke` checks a key against all of these, plus `rerank-v5.0-fast`, with one call each.
 
 ## Eval set
 
