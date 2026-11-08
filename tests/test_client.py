@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 import pytest
-from fakes import ApiFailure, FakeClock, FakeSDK
+from fakes import NO_ANSWER, ApiFailure, FakeClock, FakeSDK
 
 from labelrag import config, usage
 from labelrag.client import BudgetError, CachedCohere
@@ -135,6 +135,22 @@ def test_retry_after_header_sets_the_wait(make, clock):
     client, _ = make(FakeSDK(clock, failures=[ApiFailure(429, {"retry-after": "7"})]))
     client.rerank("q", ["x"], model="rerank-pro")
     assert clock.slept == [7.0]
+
+
+def test_a_failed_generation_is_cached_as_an_empty_answer(make, clock):
+    client, sdk = make(FakeSDK(clock, failures=[ApiFailure(422, body=NO_ANSWER)]))
+    first = client.chat(QUESTION, model="chat")
+    again = client.chat(QUESTION, model="chat")
+    assert (first.text, first.citations, first.finish_reason) == ("", [], "ERROR")
+    assert first.error == NO_ANSWER["message"]
+    assert again.cached and again.error == first.error
+    assert len(sdk.requests) == 1
+
+
+def test_other_unprocessable_requests_still_raise(make, clock):
+    client, _ = make(FakeSDK(clock, failures=[ApiFailure(422, body={"error_type": "OTHER"})]))
+    with pytest.raises(ApiFailure):
+        client.chat(QUESTION, model="chat")
 
 
 def test_client_errors_are_not_retried(make, clock):

@@ -154,8 +154,9 @@ def run_questions(
             }
             if name == "rerank":
                 timings["rerank"] = retrieval.timings_ms["rerank"]
-            timings["generate"] = ans.latency_ms
-            timings["end_to_end"] = sum(timings.values())
+            # A failed generation has no meaningful latency, so it stays out of the percentiles.
+            timings["generate"] = None if ans.error else ans.latency_ms
+            timings["end_to_end"] = None if ans.error else sum(timings.values())
             rank = gold_rank(ids, retriever.chunks, gold) if gold else None
             sibling = sibling_rank(ids, retriever.chunks, gold, ingredients) if gold else None
             rows.append(
@@ -172,6 +173,7 @@ def run_questions(
                     "context_ids": ans.document_ids,
                     "answer": ans.text,
                     "declined": ans.declined,
+                    "error": ans.error,
                     "citations": ans.citations,
                     "cited_ids": ans.cited_ids,
                     "grades": auto_grades(q, ans, retriever.chunks),
@@ -239,7 +241,8 @@ def kappa(pairs: list[tuple[bool, bool]]) -> float | None:
     return 1.0 if expected == 1 else (observed - expected) / (1 - expected)
 
 
-def percentiles(values: list[float]) -> dict[str, float | None]:
+def percentiles(values: list[float | None]) -> dict[str, float | None]:
+    values = [v for v in values if v is not None]
     if not values:
         return {"p50": None, "p95": None, "n": 0}
     return {
@@ -287,6 +290,9 @@ def summarize(
                 [r["grades"]["citations_contain_answer"] for r in rs if not r["declined"]]
             ),
             "uncited_answers": rate([not r["citations"] for r in rs if not r["declined"]]),
+            "failed_answers": rate(
+                [bool(by[(i, c)].get("error")) for i in answerable + unanswerable]
+            ),
             "context_contains_answer": rate([r["grades"]["context_contains_answer"] for r in rs]),
             "answerable_declined": rate([r["declined"] for r in rs]),
             "unanswerable_declined": rate([by[(i, c)]["declined"] for i in unanswerable]),
@@ -399,8 +405,10 @@ def markdown(summary: dict[str, Any]) -> str:
         "Citations that contain the answer counts the answers that weren't declined, and asks "
         "whether the cited chunks contain every key fact; an answer that cites nothing counts "
         f"as no. Answers that cited nothing: {fmt(m['embed']['uncited_answers'])} with "
-        f"embedding only, {fmt(m['rerank']['uncited_answers'])} with rerank. The five chunks "
-        f"sent held every key fact for {fmt(m['embed']['context_contains_answer'])} of "
+        f"embedding only, {fmt(m['rerank']['uncited_answers'])} with rerank. Answers Cohere "
+        "couldn't generate at all (a 422, no valid response generated), counted as wrong: "
+        f"{fmt(m['embed']['failed_answers'])} and {fmt(m['rerank']['failed_answers'])}. The "
+        f"five chunks sent held every key fact for {fmt(m['embed']['context_contains_answer'])} of "
         f"answerable questions with embedding only and "
         f"{fmt(m['rerank']['context_contains_answer'])} with rerank.",
         "",
@@ -488,7 +496,9 @@ def write_grades(
             "answer": r["answer"],
             "citations": " | ".join(c["text"] for c in r["citations"]),
             "auto_key_facts": (
-                f"{grades['key_facts_in_answer']}/{grades['key_facts']}"
+                "failed"
+                if r.get("error")
+                else f"{grades['key_facts_in_answer']}/{grades['key_facts']}"
                 if grades
                 else "declined"
                 if r["declined"]

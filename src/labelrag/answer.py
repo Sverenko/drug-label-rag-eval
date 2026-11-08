@@ -39,6 +39,7 @@ class Answer:
     cached: bool
     prompt_version: str = PROMPT_VERSION
     cited_ids: list[str] = field(default_factory=list)  # every chunk cited, first use first
+    error: str | None = None  # Cohere's message when no answer could be generated
 
 
 def load_prompt(version: str = PROMPT_VERSION) -> str:
@@ -82,6 +83,7 @@ def answer(
         cached=result.cached,
         prompt_version=prompt_version,
         cited_ids=cited,
+        error=result.error,
     )
 
 

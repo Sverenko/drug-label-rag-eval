@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
-from fakes import FakeClock, FakeSDK
+from fakes import NO_ANSWER, ApiFailure, FakeClock, FakeSDK
 
 from labelrag import answer, chunk, config, evaluate, fetch, index
 from labelrag.client import CachedCohere
@@ -221,6 +221,26 @@ def test_hand_grades_survive_a_rerun_and_take_over(world):
     q01 = [r for r in summary["metrics"].values()]
     assert all(m["answer_correct"]["count"] <= 1 for m in q01)  # q01 is now wrong in both
     assert summary["hand_vs_key_facts"]["graded"] == 2
+
+
+def test_a_failed_answer_is_recorded_and_the_run_goes_on(world):
+    def no_answer_for_prices(messages, documents):
+        if "cost" in messages[-1].content:
+            raise ApiFailure(422, body=NO_ANSWER)
+        return reply(messages, documents)
+
+    world[1].answer = no_answer_for_prices
+    rows, summary = run(world)
+    failed = [r for r in rows if r["id"] == "u01"]
+    assert all(r["error"] and r["answer"] == "" and not r["declined"] for r in failed)
+    assert all(r["timings_ms"]["generate"] is None for r in failed)
+    for c in ("embed", "rerank"):
+        assert summary["metrics"][c]["failed_answers"]["count"] == 1
+        assert summary["metrics"][c]["unanswerable_declined"]["count"] == 0
+    assert summary["latency_ms"]["generate"]["n"] == 2  # the two answered questions
+    calls = len(world[1].requests)
+    run(world)
+    assert len(world[1].requests) == calls  # the failure is cached too
 
 
 def test_a_question_file_with_errors_stops_the_run(world, capsys):

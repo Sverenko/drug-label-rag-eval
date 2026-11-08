@@ -106,6 +106,7 @@ class ChatResult:
     finish_reason: str | None
     latency_ms: float
     cached: bool
+    error: str | None = None  # set when Cohere couldn't generate an answer at all
 
 
 def utc_now() -> datetime:
@@ -160,6 +161,17 @@ def dump(resp: Any) -> Any:
         return resp.model_dump(mode="json", exclude_none=True)
     except Exception:
         return None
+
+
+def generation_failed(err: Exception) -> str | None:
+    """Cohere's message when it couldn't generate a valid answer (a 422 whose error type is
+    NO_VALID_RESPONSE_GENERATED). That's an outcome for this input, not a bug, so callers
+    record it instead of raising. Any other error returns None."""
+    body = getattr(err, "body", None)
+    if getattr(err, "status_code", None) == 422 and isinstance(body, dict):
+        if body.get("error_type") == "NO_VALID_RESPONSE_GENERATED":
+            return body.get("message") or "No valid response generated."
+    return None
 
 
 def retryable(err: Exception) -> bool:
@@ -451,24 +463,38 @@ class CachedCohere:
             chars = sum(len(m["content"]) for m in messages) + sum(
                 len(str(value)) for d in documents or [] for value in d.values()
             )
-            resp, latency_ms = self._call(
-                "chat",
-                model,
-                1,
-                estimate_tokens(chars) + CHAT_OUTPUT_TOKENS,
-                partial(
-                    self.sdk.chat,
-                    model=model,
-                    messages=[to_sdk_message(m) for m in messages],
-                    **kwargs,
-                ),
-            )
-            data = chat_data(resp)
+            try:
+                resp, latency_ms = self._call(
+                    "chat",
+                    model,
+                    1,
+                    estimate_tokens(chars) + CHAT_OUTPUT_TOKENS,
+                    partial(
+                        self.sdk.chat,
+                        model=model,
+                        messages=[to_sdk_message(m) for m in messages],
+                        **kwargs,
+                    ),
+                )
+                data = chat_data(resp)
+            except Exception as err:
+                message = generation_failed(err)
+                if message is None:
+                    raise
+                # Cached like an answer: the same request fails the same way, and re-running
+                # a finished eval stays free. A new prompt is a new key, so it gets retried.
+                data = {"text": "", "citations": [], "finish_reason": "ERROR", "error": message}
+                latency_ms = 0.0
             self.store.put_response(
                 key, "chat", model, {**request, **params}, data, latency_ms, stamp(self.now())
             )
         return ChatResult(
-            data["text"], data["citations"], data["finish_reason"], latency_ms, hit is not None
+            data["text"],
+            data["citations"],
+            data["finish_reason"],
+            latency_ms,
+            hit is not None,
+            data.get("error"),
         )
 
     def summary(self) -> str:

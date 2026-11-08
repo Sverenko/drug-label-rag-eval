@@ -23,10 +23,14 @@ class FakeClock:
 class ApiFailure(Exception):
     """Shaped like cohere's ApiError: a status code and response headers."""
 
-    def __init__(self, status_code, headers=None):
+    def __init__(self, status_code, headers=None, body=None):
         super().__init__(f"HTTP {status_code}")
         self.status_code = status_code
         self.headers = headers or {}
+        self.body = body
+
+
+NO_ANSWER = {"error_type": "NO_VALID_RESPONSE_GENERATED", "message": "No valid response generated."}
 
 
 def words(text: str) -> list[str]:
