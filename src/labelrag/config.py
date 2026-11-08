@@ -17,6 +17,7 @@ ENV_FILE = ROOT / ".env"
 DATA_DIR = ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
+SECTIONS_FILE = PROCESSED_DIR / "sections.jsonl"
 INDEX_DIR = DATA_DIR / "index"
 SAMPLE_DIR = DATA_DIR / "sample"
 MANIFEST = DATA_DIR / "manifest.csv"
@@ -26,6 +27,10 @@ EVAL_DIR = ROOT / "eval"
 RESULTS_DIR = ROOT / "results"
 
 KEYS_PAGE = "https://dashboard.cohere.com/api-keys"
+
+# Longest chunk of label text, in characters: about 500 tokens, far under the embed
+# models' 8,192-token input limit.
+CHUNK_CHARS = 2000
 
 # Trial-key limits from docs.cohere.com/docs/rate-limits (checked 2026-11-08).
 MONTHLY_CALL_BUDGET = 1000
