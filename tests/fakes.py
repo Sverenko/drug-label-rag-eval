@@ -82,9 +82,10 @@ class FakeSDK:
 
     def chat(self, *, model, messages, documents=None, **params):
         self._begin("chat", model=model, messages=messages, documents=documents, **params)
+        text = self.answer(messages, documents) if callable(self.answer) else self.answer
         citations = []
         if documents and self.cite:
             source = NS(id=documents[0].id)
-            citations = [NS(start=0, end=len(self.answer), text=self.answer, sources=[source])]
-        message = NS(content=[NS(type="text", text=self.answer)], citations=citations)
+            citations = [NS(start=0, end=len(text), text=text, sources=[source])]
+        message = NS(content=[NS(type="text", text=text)], citations=citations)
         return NS(message=message, finish_reason="COMPLETE", usage=None)
