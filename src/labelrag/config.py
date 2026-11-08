@@ -21,10 +21,17 @@ INDEX_DIR = DATA_DIR / "index"
 SAMPLE_DIR = DATA_DIR / "sample"
 MANIFEST = DATA_DIR / "manifest.csv"
 CACHE_DIR = ROOT / ".cache"
+CACHE_DB = CACHE_DIR / "cohere.sqlite"
 EVAL_DIR = ROOT / "eval"
 RESULTS_DIR = ROOT / "results"
 
 KEYS_PAGE = "https://dashboard.cohere.com/api-keys"
+
+# Trial-key limits from docs.cohere.com/docs/rate-limits (checked 2026-11-08).
+MONTHLY_CALL_BUDGET = 1000
+EMBED_INPUTS_PER_MINUTE = 2000
+RERANK_CALLS_PER_MINUTE = 10
+CHAT_CALLS_PER_MINUTE = 20  # per model
 
 # Cohere models, checked against the trial key by `python -m labelrag.smoke`.
 # Embed Pro and Fast share one embedding space, so label sections are indexed once
