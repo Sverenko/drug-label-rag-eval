@@ -60,6 +60,28 @@ flowchart LR
 
 [`eval/questions.jsonl`](eval/questions.jsonl) holds 60 hand-written questions. The 50 answerable ones are each tagged with the label and section that holds the answer. The other 10 can't be answered from the corpus and check whether the system declines instead of guessing.
 
+Each line of the file is one JSON object:
+
+| Field | Needed for | What it holds |
+|---|---|---|
+| `id` | every question | A unique ID, such as `q07` |
+| `question` | every question | The question, worded the way someone would ask it |
+| `answerable` | every question | `false` for the questions the labels can't answer |
+| `gold` | answerable ones | One or more `{"set_id", "section"}` locations that hold the answer. A fact can sit in more than one label: a combination pill repeats its components' text, and products that share an active ingredient share text. |
+| `answer` | answerable ones | A reference answer |
+| `key_facts` | answerable ones | Short phrases from the label text that a correct answer has to contain |
+| `tags` | optional | What makes the question hard: `brand_vs_generic`, `near_duplicate`, `multi_section` |
+| `notes` | optional | Anything else |
+
+Two format examples, not from the eval set:
+
+```json
+{"id": "q00", "question": "What is the recommended initial dose of Avapro?", "answerable": true, "gold": [{"set_id": "7885b2a8-be4e-48ab-8113-4e6ab791eb98", "section": "dosage_and_administration"}], "answer": "150 mg once daily.", "key_facts": ["150 mg once daily"], "tags": []}
+{"id": "u00", "question": "How much does a month of Avapro cost?", "answerable": false, "tags": []}
+```
+
+`python -m labelrag.questions` checks the file: unique IDs, required fields, and gold locations that exist in the corpus. Once the sections are built, it also warns when a key fact isn't in the gold text word for word, and when every key fact also appears in a section that isn't listed as gold, either elsewhere in the same label or in a label with the same active ingredient. `python -m labelrag.questions find <name>` gives a label's set_id and DailyMed link, and `python -m labelrag.questions show <label> <section>` prints a section exactly as it's indexed.
+
 <!--
 How the questions were written (from the label text, before running retrieval), what makes some of them hard (brand vs generic names, facts that appear in more than one section), and one example row.
 -->

@@ -24,6 +24,7 @@ MANIFEST = DATA_DIR / "manifest.csv"
 CACHE_DIR = ROOT / ".cache"
 CACHE_DB = CACHE_DIR / "cohere.sqlite"
 EVAL_DIR = ROOT / "eval"
+QUESTIONS_FILE = EVAL_DIR / "questions.jsonl"
 RESULTS_DIR = ROOT / "results"
 
 KEYS_PAGE = "https://dashboard.cohere.com/api-keys"
