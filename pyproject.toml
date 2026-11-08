@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labelrag"
+version = "0.1.0"
+description = "Question answering over FDA drug labels with Cohere Embed, Rerank and Command, plus an eval harness"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Tom Radford" }]
+dependencies = [
+    "cohere>=7.3,<8",
+    "httpx>=0.28,<1",
+    "numpy>=2.5,<3",
+    "python-dotenv>=1.2,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9,<10",
+    "ruff>=0.17",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
