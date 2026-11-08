@@ -58,7 +58,7 @@ flowchart LR
 
 ## Eval set
 
-[`eval/questions.jsonl`](eval/questions.jsonl) holds 60 hand-written questions. The 50 answerable ones are each tagged with the label and section that holds the answer. The other 10 can't be answered from the corpus and check whether the system declines instead of guessing.
+[`eval/questions.jsonl`](eval/questions.jsonl) holds 60 questions written from the label text before any retrieval ran on them. The 50 answerable ones are each tagged with the label and section that holds the answer. The other 10 can't be answered from the corpus and check whether the system declines instead of guessing.
 
 Each line of the file is one JSON object:
 
@@ -70,7 +70,7 @@ Each line of the file is one JSON object:
 | `gold` | answerable ones | One or more `{"set_id", "section"}` locations that hold the answer. A fact can sit in more than one label: a combination pill repeats its components' text, and products that share an active ingredient share text. |
 | `answer` | answerable ones | A reference answer |
 | `key_facts` | answerable ones | Short phrases from the label text that a correct answer has to contain |
-| `tags` | optional | What makes the question hard: `brand_vs_generic`, `near_duplicate`, `multi_section` |
+| `tags` | optional | What makes an answerable question hard, or what makes an unanswerable one tempting to answer. [`eval/README.md`](eval/README.md) defines each tag. |
 | `notes` | optional | Anything else |
 
 Two format examples, not from the eval set:
@@ -80,11 +80,9 @@ Two format examples, not from the eval set:
 {"id": "u00", "question": "How much does a month of Avapro cost?", "answerable": false, "tags": []}
 ```
 
-`python -m labelrag.questions` checks the file: unique IDs, required fields, and gold locations that exist in the corpus. Once the sections are built, it also warns when a key fact isn't in the gold text word for word, and when every key fact also appears in a section that isn't listed as gold, either elsewhere in the same label or in a label with the same active ingredient. `python -m labelrag.questions find <name>` gives a label's set_id and DailyMed link, and `python -m labelrag.questions show <label> <section>` prints a section exactly as it's indexed.
+`python -m labelrag.questions` checks the file: unique IDs, required fields, and gold locations that exist in the corpus. Once the sections are built, it also warns when a key fact isn't in the gold text word for word, and when every key fact also appears in a section that isn't listed as gold, either elsewhere in the same label or in a label with the same active ingredient. Questions tagged `near_duplicate` skip the second half of that check, because their relatives were left out of gold on purpose. `python -m labelrag.questions find <name>` gives a label's set_id and DailyMed link, and `python -m labelrag.questions show <label> <section>` prints a section exactly as it's indexed.
 
-<!--
-How the questions were written (from the label text, before running retrieval), what makes some of them hard (brand vs generic names, facts that appear in more than one section), and one example row.
--->
+Most of the answerable questions are hard in a specific, tagged way. 26 have near-identical text under a sibling label's name, 7 ask about something the current label says differently from older labels or common knowledge, and 7 rest on a false premise the answer has to correct. 11 are plain lookups, kept as a baseline. [`eval/README.md`](eval/README.md) explains each group and what a grader needs to watch for.
 
 ## Metrics
 

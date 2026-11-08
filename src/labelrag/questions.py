@@ -31,7 +31,16 @@ from typing import Any
 
 from labelrag import chunk, config, fetch
 
-KNOWN_TAGS = {"brand_vs_generic", "near_duplicate", "multi_section"}
+# What makes a question hard. eval/README.md defines each one.
+ANSWERABLE_TAGS = {
+    "brand_vs_generic", "near_duplicate", "multi_section", "lay_terms", "full_text",
+    "knowledge_conflict", "label_comparison", "false_premise",
+}  # fmt: skip
+# Why an unanswerable question can't be answered, and what makes guessing tempting.
+UNANSWERABLE_TAGS = {
+    "not_in_label", "off_label", "absent_drug", "mentioned_only", "unmentioned_comparison",
+}  # fmt: skip
+KNOWN_TAGS = ANSWERABLE_TAGS | UNANSWERABLE_TAGS
 FIELDS = {"id", "question", "answerable", "gold", "answer", "key_facts", "tags", "notes"}
 DAILYMED = "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={}"
 SHOWN_ELSEWHERE = 4
@@ -152,7 +161,9 @@ def fact_warnings(
     """Key facts that aren't in the gold text word for word, and sections that hold every
     key fact but aren't listed as gold: other sections of a gold label, or sections of a
     label that shares an active ingredient with one (Avapro and Avalide both carry
-    irbesartan, so much of their text is the same)."""
+    irbesartan, so much of their text is the same). A near_duplicate tag says the question
+    names one product and its relatives were left out of gold on purpose, so for those
+    questions only the gold labels' own sections are checked."""
     gold = gold_locations(q)
     facts = [f for f in q.get("key_facts") or [] if is_text(f)]
     if not facts or not gold or any(loc not in texts for loc in gold):
@@ -166,9 +177,12 @@ def fact_warnings(
             )
     gold_labels = {set_id for set_id, _ in gold}
     gold_ingredients = set().union(*(ingredients.get(set_id, set()) for set_id in gold_labels))
+    relatives_ruled_out = "near_duplicate" in (q.get("tags") or [])
 
     def related(set_id: str) -> bool:
-        return set_id in gold_labels or bool(ingredients.get(set_id, set()) & gold_ingredients)
+        if set_id in gold_labels:
+            return True
+        return not relatives_ruled_out and bool(ingredients.get(set_id, set()) & gold_ingredients)
 
     wanted = [normalize(f) for f in facts]
     elsewhere = [

@@ -105,6 +105,21 @@ def test_warns_when_the_key_facts_also_appear_in_another_label(tmp_path, corpus)
     assert "also appears in Avalide Clinical Pharmacology" in report.warnings[0]
 
 
+def test_a_near_duplicate_tag_silences_only_the_other_labels(tmp_path, corpus):
+    only_avapro = [{"set_id": AVAPRO, "section": "clinical_pharmacology"}]
+    tagged = answerable(gold=only_avapro, tags=["near_duplicate"], **METABOLISM)
+    assert check(tmp_path, corpus, tagged).warnings == []
+    wrong_section = answerable(
+        gold=[{"set_id": AVAPRO, "section": "adverse_reactions"}],
+        tags=["near_duplicate"],
+        key_facts=["150 mg once daily"],
+    )
+    elsewhere = [w for w in check(tmp_path, corpus, wrong_section).warnings if "also appears" in w]
+    assert len(elsewhere) == 1
+    assert "Avapro Dosage and Administration" in elsewhere[0]
+    assert "Avalide" not in elsewhere[0]
+
+
 def test_unrelated_labels_with_the_same_words_are_not_flagged():
     assert questions.ingredient_words("IRBESARTAN AND HYDROCHLOROTHIAZIDE") == {
         "irbesartan",
