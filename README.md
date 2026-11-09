@@ -87,8 +87,8 @@ Most of the answerable questions are hard in a specific, tagged way. 26 have nea
 ## Metrics
 
 - **hit@k**: the gold section is among the top k retrieved sections.
-- **Answer correct**: <!-- how it's graded, and how the grader was checked against hand labels -->
-- **Citation contains the answer**: the cited passage, read on its own, supports the answer.
+- **Answer correct**: graded by hand as right, partly right or wrong, with partly right counted as wrong. The rubric is in [`eval/README.md`](eval/README.md#notes-for-grading): a wrong yes or no is wrong even when the right passage is quoted, and declining a question with a false premise is wrong, since the label corrects it. Claude graded the same answers as a second grader, after the hand grades were in, and the two agree on 94 of 102 distinct answers (Cohen's kappa 0.71). An automatic check, whether the answer contains every key fact word for word, agrees with either grader at kappa 0.47. It misses paraphrases, so it undercounts: 32 and 35 of 50 right, against 42 and 42 by hand. After grading, `python -m labelrag.evaluate --run <name> --regrade` re-scores a run with no API calls.
+- **Citation contains the answer**: the cited chunks contain every key fact, checked automatically. That check is reliable, because the key facts are copied from the chunk text. An answer that cites nothing counts as no.
 - **Declined**: the answer says the labels don't cover the question instead of guessing.
 - **Latency**: wall-clock time per stage across the eval set.
 
