@@ -49,7 +49,7 @@ The first run (prompt v1) declined questions whose premise the label contradicts
 | v2 | 42/50 | 43/50 | 6 and 5 | 10/44 and 8/45 | 1.5 s |
 | v3 | 45/50 | 47/50 | 1 and 0 | 10/49 and 11/50 | 1.3 s |
 
-v3 against v1 with rerank is the only difference here that clears noise (McNemar p = 0.012; 0.125 with embedding only). Two caveats: v2 and v3 were written after reading v1's failures on these same 60 questions, so their gains are an optimistic estimate of how they'd do on new questions; and answers that cite nothing went up from v1. Each prompt was committed before its run, and [`results/`](results/) has every answer, its grades and a comparison against the earlier version.
+v3 against v1 with rerank is the only difference here that clears noise (McNemar p = 0.012; 0.125 with embedding only). Two caveats: v2 and v3 were written after reading v1's failures on these same 60 questions, so their gains are an optimistic estimate of how they'd do on new questions; and answers that cite nothing went up from v1, almost all of them answers that open with Yes or No ([Where it fails](#where-it-fails)). Each prompt was committed before its run, and [`results/`](results/) has every answer, its grades and a comparison against the earlier version.
 
 ### Retrieval experiments
 
@@ -63,6 +63,24 @@ One setting changed at a time, retrieval only, on the same 50 answerable questio
 | Chunks without the drug-name header | 70% embedding, 78% reranked | 96% and 96% (p = 0.5 reranked) | | Within noise overall, but every question asked by generic name about a brand-named passage ranks lower ([Design decisions](#design-decisions)) |
 
 Latency in each row is the stage's own p50 from single calls. The experiments' rows and summaries are in [`results/experiments/`](results/experiments/).
+
+### Where it fails
+
+Every failure in the final run has a cause in [`docs/failure-analysis.md`](docs/failure-analysis.md). Of the 120 answers, 11 aren't right:
+
+| Cause | Answers |
+|---|---|
+| Gold section not in the top 50 | 0 |
+| In the top 50, but not the top 5 | 1 |
+| Right context, wrong answer | 6 |
+| Answered from memory | 1 |
+| Cohere returned no answer (a 422) | 3 |
+
+Retrieval rarely costs an answer: in the 24 rows where the gold section wasn't ranked first, the chunk above it came from the right label 22 times, and from the same brand's other label (Imitrex injection, for a question about the tablets) the other 2. Three examples of what does go wrong:
+
+- **A fix that broke something else.** "I sometimes see what looks like a whole Glucotrol XL tablet in my stool. Does that mean it isn't working?" v1 answered correctly. v2 added a rule to start yes/no answers with Yes or No, and since then both orders answer "Yes, … This does not mean the medication isn't working." The same rule is behind most of the uncited answers: with v3, 16 of 41 answers that open with Yes or No cite nothing, against 5 of 58 others (Fisher's exact test, p = 0.0004), while with v1 such answers were cited (1 of 19 uncited).
+- **The new label in the context, the old label in the answer.** Asked whether Lipitor is contraindicated in pregnancy, with the pregnancy section ranked first, the embedding-order answer said yes, which is what statin labels said until 2021. It cites the right passage, so a citation check can't catch it.
+- **No answer instead of a decline.** Three unanswerable questions (Eliquis, Wegovy, Nurtec ODT against Reyvow) got Cohere's 422 with rerank, where the embedding-order versions declined correctly. Every 422 in the project came on an unanswerable question.
 
 ## How it works
 
@@ -137,8 +155,8 @@ Most of the answerable questions are hard in a specific, tagged way. 26 have nea
 - **More questions.** With 50, only one comparison here clears p < 0.05. Rerank's hit@1 gain (36 to 40 of 50) would need a few hundred questions to confirm or rule out.
 - **Try Rerank Fast in the pipeline.** It matched Pro on these 50 questions and saved about 110 ms a question; a larger set would show whether there's a small quality gap.
 - **Treat Cohere's 422 on a decline as a decline,** and check it doesn't hide real failures. All of them so far came on unanswerable questions.
-- **Citations.** 10 to 11 v3 answers cite nothing, up from 5 to 6 with v1, even when they paraphrase the label. The longer prompt may be the cause; Command's stricter citation mode isn't available for this model.
-- **A failure analysis that sorts every remaining miss by cause:** retrieval, the wrong label, a yes or no that contradicts the rest of the answer (Glucotrol XL, "Does that mean it isn't working?", still opens with "Yes"), or a false premise accepted.
+- **Drop or reword the yes/no rule.** It caused 3 of the 6 right-context errors and most of the uncited answers. Letting the label's own words come first, and the Yes or No after, is the first thing to try; Command's stricter citation mode isn't available for this model.
+- **Test retrieval models on a harder setup** before choosing between them: a bigger corpus, questions that don't name the drug, or a smaller candidate pool. Here retrieval only fails over which section of the right label comes first, which is why Pro and Fast come out even.
 - **Grade the later runs by hand too.** I graded the first run myself; v2 and v3 carry Claude's grades only.
 - **Fill the corpus gaps** by adding the labels without an `openfda` block by hand, so Eliquis and Crestor can be asked about.
 
