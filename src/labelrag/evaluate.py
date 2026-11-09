@@ -2,6 +2,7 @@
 
     python -m labelrag.evaluate --run baseline           # all questions
     python -m labelrag.evaluate --run check --limit 2    # the first two, as a check
+    python -m labelrag.evaluate --run baseline --regrade # re-score after grading
 
 One retrieval per question gives the embedding-only and the reranked order of the same 50
 chunks, and Command answers twice, once from each top 5. Results go to results/<run>/:
@@ -12,9 +13,12 @@ chunks, and Command answers twice, once from each top 5. Results go to results/<
 - summary.json and summary.md: the metrics as counts and percentages, the questions where
   the two configurations disagree, McNemar's test on each pair, latency percentiles, and
   results by tag.
-- grades.csv: one row per distinct answer to grade by hand. Re-runs keep the hand grades,
-  and once any are filled in they replace the key-fact grade in the summary, which then
-  reports how often the two agree.
+- grades.csv: one row per distinct answer, with columns for a grader working by hand and
+  for a second grader (Claude, for comparison), each y, n or partial with a comment.
+  Re-runs keep the grades. Once hand grades are filled in they replace the key-fact grade
+  in the summary, with partial counted as wrong, and the summary reports how often the
+  graders agree with each other and with the key facts. `--regrade` recomputes the summary
+  and the sheet from the saved rows, with no retrieval or API calls.
 
 Automatic grades check the question's key facts, copied from the indexed text, against
 the answer, the cited chunks and the five chunks sent. Citations are judged this way
@@ -58,8 +62,13 @@ GRADE_COLUMNS = [
     "auto_key_facts",
     "hand_correct",
     "comment",
+    "claude_correct",
+    "claude_comment",
 ]
+GRADE_FIELDS = ("hand_correct", "comment", "claude_correct", "claude_comment")
+GRADERS = {"hand_correct": "hand", "claude_correct": "claude"}
 YES, NO = {"y", "yes", "1", "true", "correct"}, {"n", "no", "0", "false", "wrong"}
+PARTIAL = {"p", "partial", "partly", "indeterminate"}
 
 
 def norm(text: str) -> str:
@@ -189,29 +198,35 @@ def run_questions(
 
 
 def read_hand_grades(path: Path) -> dict[tuple[str, str], dict[str, str]]:
-    """Hand grades from a grades.csv, keyed by question ID and answer text."""
+    """Both graders' grades and comments from a grades.csv, keyed by question ID and answer
+    text."""
     if not path.exists():
         return {}
     with path.open(newline="", encoding="utf-8") as f:
         return {
-            (row["id"], row["answer"]): {
-                "hand_correct": row.get("hand_correct", ""),
-                "comment": row.get("comment", ""),
-            }
+            (row["id"], row["answer"]): {field: row.get(field) or "" for field in GRADE_FIELDS}
             for row in csv.DictReader(f)
         }
 
 
-def hand_verdict(value: str) -> bool | None:
+def grade(value: str | None) -> str | None:
+    """A grade as y, n or partial, or None if blank or unreadable."""
     value = (value or "").strip().lower()
-    return True if value in YES else False if value in NO else None
+    if value in YES:
+        return "y"
+    if value in NO:
+        return "n"
+    return "partial" if value in PARTIAL else None
 
 
-def answer_correct(row: dict[str, Any], hand: dict) -> tuple[bool, str]:
-    """A hand grade if there is one, otherwise the key-fact grade."""
-    verdict = hand_verdict(hand.get((row["id"], row["answer"]), {}).get("hand_correct", ""))
+def answer_correct(
+    row: dict[str, Any], hand: dict, column: str = "hand_correct"
+) -> tuple[bool, str]:
+    """The grader's verdict if there is one (partial counts as wrong), otherwise the key-fact
+    grade."""
+    verdict = grade(hand.get((row["id"], row["answer"]), {}).get(column))
     if verdict is not None:
-        return verdict, "hand"
+        return verdict == "y", GRADERS[column]
     return bool(row["grades"].get("answer_has_key_facts")), "key_facts"
 
 
@@ -230,15 +245,21 @@ def mcnemar(embed: list[bool], rerank: list[bool]) -> dict[str, Any]:
     return {"only_embed": only_embed, "only_rerank": only_rerank, "p_value": p}
 
 
-def kappa(pairs: list[tuple[bool, bool]]) -> float | None:
-    """Cohen's kappa for two raters' yes/no grades."""
+def kappa(pairs: list[tuple[Any, Any]]) -> float | None:
+    """Cohen's kappa for two raters' grades of the same items, in any number of categories."""
     if not pairs:
         return None
     n = len(pairs)
     observed = sum(a == b for a, b in pairs) / n
-    yes_a, yes_b = sum(a for a, _ in pairs) / n, sum(b for _, b in pairs) / n
-    expected = yes_a * yes_b + (1 - yes_a) * (1 - yes_b)
+    categories = {value for pair in pairs for value in pair}
+    expected = sum(
+        sum(a == k for a, _ in pairs) / n * sum(b == k for _, b in pairs) / n for k in categories
+    )
     return 1.0 if expected == 1 else (observed - expected) / (1 - expected)
+
+
+def agreement(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
+    return {"graded": len(pairs), "agree": sum(a == b for a, b in pairs), "kappa": kappa(pairs)}
 
 
 def percentiles(values: list[float | None]) -> dict[str, float | None]:
@@ -265,6 +286,9 @@ def summarize(
     def correct(r):
         return answer_correct(r, hand)[0]
 
+    def grade_of(r, column: str) -> str | None:
+        return grade(hand.get((r["id"], r["answer"]), {}).get(column))
+
     def sibling_first(r) -> bool:
         """A sibling label's chunk made the top 5 ahead of every gold chunk."""
         sibling, gold = r.get("sibling_rank"), r["gold_rank"]
@@ -273,18 +297,23 @@ def summarize(
     flags: dict[str, dict[str, list[bool]]] = {}
     metrics: dict[str, Any] = {}
     sources = {answer_correct(by[(i, c)], hand)[1] for i in answerable for c in CONFIGS}
+    claude_graded = any(grade_of(r, "claude_correct") for r in rows)
     for c in CONFIGS:
         rs = [by[(i, c)] for i in answerable]
         flags[c] = {
             "hit@1": [ranked_within(1)(r) for r in rs],
             "hit@5": [ranked_within(5)(r) for r in rs],
             "answer_correct": [correct(r) for r in rs],
+            "answer_correct_claude": [answer_correct(r, hand, "claude_correct")[0] for r in rs],
         }
         metrics[c] = {
             "hit@1": rate(flags[c]["hit@1"]),
             "hit@5": rate(flags[c]["hit@5"]),
             "hit@50": rate([r["gold_rank"] is not None for r in rs]),
             "answer_correct": rate(flags[c]["answer_correct"]),
+            "answer_partial": rate([grade_of(r, "hand_correct") == "partial" for r in rs]),
+            "answer_correct_claude": rate(flags[c]["answer_correct_claude"]),
+            "answer_partial_claude": rate([grade_of(r, "claude_correct") == "partial" for r in rs]),
             "answer_has_key_facts": rate([r["grades"]["answer_has_key_facts"] for r in rs]),
             "citations_contain_answer": rate(
                 [r["grades"]["citations_contain_answer"] for r in rs if not r["declined"]]
@@ -335,11 +364,25 @@ def summarize(
             for c in CONFIGS
         }
 
-    graded = [
-        (answer_correct(r, hand)[0], bool(r["grades"]["answer_has_key_facts"]))
-        for r in rows
-        if r["answerable"] and answer_correct(r, hand)[1] == "hand"
-    ]
+    # Agreement is over distinct answers, as graded: identical answers from the two
+    # configurations are one row of the grading sheet.
+    distinct: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        distinct.setdefault((r["id"], r["answer"]), r)
+    by_hand = {k: grade_of(r, "hand_correct") for k, r in distinct.items()}
+    by_claude = {k: grade_of(r, "claude_correct") for k, r in distinct.items()}
+    both = [(by_hand[k], by_claude[k]) for k in distinct if by_hand[k] and by_claude[k]]
+
+    def vs_key_facts(grades: dict) -> list[tuple[bool, bool]]:
+        return [
+            (grades[k] == "y", bool(r["grades"]["answer_has_key_facts"]))
+            for k, r in distinct.items()
+            if grades[k] and r["answerable"]
+        ]
+
+    tested = ("hit@1", "hit@5", "answer_correct") + (
+        ("answer_correct_claude",) if claude_graded else ()
+    )
     return {
         "run": meta,
         "questions": {
@@ -348,18 +391,17 @@ def summarize(
             "unanswerable": len(unanswerable),
         },
         "answer_grades_from": sorted(sources),
+        "claude_grades": claude_graded,
         "metrics": metrics,
-        "mcnemar": {
-            m: mcnemar(flags["embed"][m], flags["rerank"][m])
-            for m in ("hit@1", "hit@5", "answer_correct")
-        },
+        "mcnemar": {m: mcnemar(flags["embed"][m], flags["rerank"][m]) for m in tested},
         "disagreements": {m: differ(m) for m in ("hit@5", "answer_correct")},
         "latency_ms": latency,
         "by_tag": by_tag,
-        "hand_vs_key_facts": {
-            "graded": len(graded),
-            "agree": sum(a == b for a, b in graded),
-            "kappa": kappa(graded),
+        "graders": {
+            "hand_vs_key_facts": agreement(vs_key_facts(by_hand)),
+            "claude_vs_key_facts": agreement(vs_key_facts(by_claude)),
+            "hand_vs_claude": agreement(both),
+            "hand_vs_claude_strict": agreement([(a == "y", b == "y") for a, b in both]),
         },
     }
 
@@ -373,11 +415,40 @@ def fmt(r: dict[str, Any]) -> str:
 def markdown(summary: dict[str, Any]) -> str:
     m, run, n = summary["metrics"], summary["run"], summary["questions"]
     models = run["models"]
-    grade_source = " and ".join(summary["answer_grades_from"]).replace("key_facts", "key facts")
+    sources = {"hand": "hand grades", "key_facts": "key facts"}
+    grade_source = " and ".join(sources[s] for s in summary["answer_grades_from"])
+    hand_graded, claude_graded = "hand" in summary["answer_grades_from"], summary["claude_grades"]
 
     def table_row(label: str, key: str, with_rerank: bool = True) -> str:
         rerank = fmt(m["rerank"][key]) if with_rerank else "—"
         return f"| {label} | {fmt(m['embed'][key])} | {rerank} |"
+
+    answer_rows = [table_row(f"Answer correct ({grade_source})", "answer_correct")]
+    if claude_graded:
+        answer_rows.append(table_row("Answer correct (Claude's grades)", "answer_correct_claude"))
+    if hand_graded or claude_graded:
+        key_facts = table_row("Answer has every key fact (automatic)", "answer_has_key_facts")
+        answer_rows.append(key_facts)
+    partial = []
+    if hand_graded:
+        partial.append(
+            f"{fmt(m['embed']['answer_partial'])} and {fmt(m['rerank']['answer_partial'])} by hand"
+        )
+    if claude_graded:
+        partial.append(
+            f"{fmt(m['embed']['answer_partial_claude'])} and "
+            f"{fmt(m['rerank']['answer_partial_claude'])} by Claude"
+        )
+    partial_note = (
+        [
+            "",
+            "Answers graded partly right count as wrong in the rows above: "
+            + "; ".join(partial)
+            + " (embedding only, then rerank).",
+        ]
+        if partial
+        else []
+    )
 
     lines = [
         f"# Eval run: {run['name']}",
@@ -392,10 +463,11 @@ def markdown(summary: dict[str, Any]) -> str:
         table_row("Right section in the top 5 (hit@5)", "hit@5"),
         table_row("Right section ranked first (hit@1)", "hit@1"),
         table_row("Right section anywhere in the top 50", "hit@50", with_rerank=False),
-        table_row(f"Answer correct ({grade_source})", "answer_correct"),
+        *answer_rows,
         table_row("Citations that contain the answer", "citations_contain_answer"),
         table_row("Unanswerable questions declined", "unanswerable_declined"),
         table_row("Answerable questions wrongly declined", "answerable_declined"),
+        *partial_note,
         "",
         "Near-duplicate questions where a sibling label's copy of a gold section ranked inside "
         "the top 5 and above every gold chunk (a Zepbound chunk ahead of Mounjaro's, say): "
@@ -463,13 +535,19 @@ def markdown(summary: dict[str, Any]) -> str:
             counts = [e["hit@5"], k["hit@5"], e["answer_correct"], k["answer_correct"]]
             cells = " | ".join(str(c["count"]) for c in counts)
             lines.append(f"| {tag} | {e['hit@5']['n']} | {cells} |")
-    agreement = summary["hand_vs_key_facts"]
-    if agreement["graded"]:
-        lines += [
-            "",
-            f"Hand grades vs key-fact grades: {agreement['agree']}/{agreement['graded']} agree, "
-            f"Cohen's kappa {agreement['kappa']:.2f}.",
-        ]
+    pairs = {
+        "hand_vs_claude": "Hand vs Claude, as right, partly right or wrong",
+        "hand_vs_claude_strict": "Hand vs Claude, counting partly right as wrong",
+        "hand_vs_key_facts": "Hand vs the key-fact check (answerable questions)",
+        "claude_vs_key_facts": "Claude vs the key-fact check (answerable questions)",
+    }
+    notes = [
+        f"- {label}: {a['agree']}/{a['graded']} agree, Cohen's kappa {a['kappa']:.2f}"
+        for key, label in pairs.items()
+        if (a := summary["graders"][key])["graded"]
+    ]
+    if notes:
+        lines += ["", "How often the graders agree, over distinct answers:", "", *notes]
     return "\n".join(lines) + "\n"
 
 
@@ -504,7 +582,7 @@ def write_grades(
                 if r["declined"]
                 else "answered"
             ),
-            **{"hand_correct": "", "comment": ""},
+            **dict.fromkeys(GRADE_FIELDS, ""),
             **hand.get(key, {}),
         }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -520,6 +598,34 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_report(
+    run_dir: Path, rows: list[dict[str, Any]], qs: list[dict[str, Any]], meta: dict[str, Any]
+) -> tuple[str, int]:
+    """Score the rows with the grades on file and write the summary and grading sheet."""
+    hand = read_hand_grades(run_dir / "grades.csv")
+    summary = summarize(rows, qs, meta, hand)
+    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    text = markdown(summary)
+    (run_dir / "summary.md").write_text(text, encoding="utf-8")
+    return text, write_grades(rows, qs, run_dir / "grades.csv", hand)
+
+
+def regrade(run_dir: Path) -> int:
+    """Re-score a finished run from its saved rows, after grading: no retrieval, no calls."""
+    if not (run_dir / "rows.jsonl").exists():
+        print(f"No finished run in {run_dir}; run it first without --regrade.")
+        return 1
+    lines = (run_dir / "rows.jsonl").read_text(encoding="utf-8").splitlines()
+    rows = [json.loads(line) for line in lines if line.strip()]
+    meta = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))["run"]
+    ids = {r["id"] for r in rows}
+    qs = [q for q in load_questions() if q["id"] in ids]
+    text, sheet = write_report(run_dir, rows, qs, meta)
+    print(text)
+    print(f"Re-scored results/{run_dir.name}/ from rows.jsonl ({sheet} distinct answers).")
+    return 0
+
+
 def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run every eval question through the pipeline.")
     parser.add_argument(
@@ -532,7 +638,14 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
         default=260,
         help="stop before making more than this many new API calls",
     )
+    parser.add_argument(
+        "--regrade",
+        action="store_true",
+        help="re-score the run's saved rows with the current grades, without running anything",
+    )
     args = parser.parse_args(argv)
+    if args.regrade:
+        return regrade(config.RESULTS_DIR / args.run)
 
     report = questions.validate()
     if report.errors:
@@ -555,7 +668,6 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
     with (run_dir / "rows.jsonl").open("w", encoding="utf-8", newline="\n") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    hand = read_hand_grades(run_dir / "grades.csv")
     meta = {
         "name": args.run,
         "finished": stamp(utc_now()),
@@ -570,11 +682,7 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
         "index_built_at": retriever.index.meta.get("built_at"),
         "new_api_calls": dict(client.calls),
     }
-    summary = summarize(rows, qs, meta, hand)
-    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    text = markdown(summary)
-    (run_dir / "summary.md").write_text(text, encoding="utf-8")
-    sheet = write_grades(rows, qs, run_dir / "grades.csv", hand)
+    text, sheet = write_report(run_dir, rows, qs, meta)
     print()
     print(text)
     files = "rows.jsonl, summary.json, summary.md, grades.csv"

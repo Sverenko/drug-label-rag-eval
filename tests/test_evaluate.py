@@ -198,29 +198,83 @@ def test_limit_runs_only_the_first_questions(world):
     assert summary["questions"]["total"] == 1
 
 
-def test_hand_grades_survive_a_rerun_and_take_over(world):
-    run(world)
+def grade_sheet(world, **grades_by_id):
+    """Fill in grades.csv: {question ID: {column: value}}."""
     sheet = world[3] / "grades.csv"
     with sheet.open(newline="", encoding="utf-8") as f:
         graded = list(csv.DictReader(f))
     for row in graded:
-        if row["id"] == "q01":
-            row["hand_correct"] = "n"
-            row["comment"] = "too vague"
+        row.update(grades_by_id.get(row["id"], {}))
     with sheet.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=evaluate.GRADE_COLUMNS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(graded)
+    return sheet
+
+
+def test_both_graders_survive_a_rerun_and_hand_grades_take_over(world):
+    run(world)
+    grades = {
+        "hand_correct": "n",
+        "comment": "too vague",
+        "claude_correct": "partial",
+        "claude_comment": "half right",
+    }
+    sheet = grade_sheet(world, q01=grades)
     rows, summary = run(world)
     with sheet.open(newline="", encoding="utf-8") as f:
         kept = [row for row in csv.DictReader(f) if row["id"] == "q01"]
-    assert kept and all(
-        row["hand_correct"] == "n" and row["comment"] == "too vague" for row in kept
+    assert kept and all({k: row[k] for k in grades} == grades for row in kept)
+    assert "hand" in summary["answer_grades_from"] and summary["claude_grades"]
+    for m in summary["metrics"].values():
+        assert m["answer_correct"]["count"] <= 1  # q01 is now wrong in both
+        assert m["answer_partial_claude"]["count"] == 1  # and partial, which counts as wrong
+        assert m["answer_correct_claude"]["count"] <= 1
+    graders = summary["graders"]
+    assert graders["hand_vs_key_facts"]["graded"] == len(kept)  # distinct answers, as graded
+    assert graders["hand_vs_claude"]["graded"] == len(kept)
+    assert graders["hand_vs_claude"]["agree"] == 0  # n vs partial
+    assert graders["hand_vs_claude_strict"]["agree"] == len(kept)  # both count as wrong
+    assert "Answer correct (Claude's grades)" in (world[3] / "summary.md").read_text(
+        encoding="utf-8"
     )
-    assert "hand" in summary["answer_grades_from"]
-    q01 = [r for r in summary["metrics"].values()]
-    assert all(m["answer_correct"]["count"] <= 1 for m in q01)  # q01 is now wrong in both
-    assert summary["hand_vs_key_facts"]["graded"] == 2
+
+
+def test_regrade_rescores_the_saved_rows_without_running_anything(world):
+    run(world)
+    calls = len(world[1].requests)
+    rows_file = world[3] / "rows.jsonl"
+    before = rows_file.read_text(encoding="utf-8")
+    grade_sheet(world, q01={"hand_correct": "y"}, q02={"hand_correct": "Partial"})
+    assert evaluate.main(["--run", "test", "--regrade"]) == 0  # no client needed
+    assert len(world[1].requests) == calls
+    assert rows_file.read_text(encoding="utf-8") == before
+    summary = json.loads((world[3] / "summary.json").read_text(encoding="utf-8"))
+    assert summary["answer_grades_from"] == ["hand"]
+    for m in summary["metrics"].values():
+        assert m["answer_correct"]["count"] == 1 and m["answer_partial"]["count"] == 1
+
+
+def test_regrade_needs_a_finished_run(world, capsys):
+    assert evaluate.main(["--run", "missing", "--regrade"]) == 1
+    assert "run it first" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Y", "y"),
+        ("correct", "y"),
+        (" no ", "n"),
+        ("Partial", "partial"),
+        ("indeterminate", "partial"),
+        ("", None),
+        (None, None),
+        ("maybe", None),
+    ],
+)
+def test_grade_values(value, expected):
+    assert evaluate.grade(value) == expected
 
 
 def test_a_failed_answer_is_recorded_and_the_run_goes_on(world):
@@ -265,6 +319,9 @@ def test_kappa():
     assert evaluate.kappa([(True, True), (False, False)]) == 1.0
     assert evaluate.kappa([(True, False), (False, True)]) == -1.0
     assert evaluate.kappa([]) is None
+    # Three categories: observed 3/4, expected (2*1 + 1*1 + 1*2)/16, so kappa = 7/11.
+    three = [("y", "y"), ("y", "partial"), ("n", "n"), ("partial", "partial")]
+    assert evaluate.kappa(three) == pytest.approx(7 / 11)
 
 
 @pytest.mark.parametrize(

@@ -19,8 +19,9 @@
     "unanswerable": 10
   },
   "answer_grades_from": [
-    "key_facts"
+    "hand"
   ],
+  "claude_grades": true,
   "metrics": {
     "embed": {
       "hit@1": {
@@ -39,9 +40,24 @@
         "rate": 1.0
       },
       "answer_correct": {
-        "count": 32,
+        "count": 42,
         "n": 50,
-        "rate": 0.64
+        "rate": 0.84
+      },
+      "answer_partial": {
+        "count": 4,
+        "n": 50,
+        "rate": 0.08
+      },
+      "answer_correct_claude": {
+        "count": 40,
+        "n": 50,
+        "rate": 0.8
+      },
+      "answer_partial_claude": {
+        "count": 3,
+        "n": 50,
+        "rate": 0.06
       },
       "answer_has_key_facts": {
         "count": 32,
@@ -101,9 +117,24 @@
         "rate": 1.0
       },
       "answer_correct": {
-        "count": 35,
+        "count": 42,
         "n": 50,
-        "rate": 0.7
+        "rate": 0.84
+      },
+      "answer_partial": {
+        "count": 3,
+        "n": 50,
+        "rate": 0.06
+      },
+      "answer_correct_claude": {
+        "count": 38,
+        "n": 50,
+        "rate": 0.76
+      },
+      "answer_partial_claude": {
+        "count": 4,
+        "n": 50,
+        "rate": 0.08
       },
       "answer_has_key_facts": {
         "count": 35,
@@ -159,9 +190,14 @@
       "p_value": 1.0
     },
     "answer_correct": {
-      "only_embed": 4,
-      "only_rerank": 7,
-      "p_value": 0.548828125
+      "only_embed": 2,
+      "only_rerank": 2,
+      "p_value": 1.0
+    },
+    "answer_correct_claude": {
+      "only_embed": 3,
+      "only_rerank": 1,
+      "p_value": 0.625
     }
   },
   "disagreements": {
@@ -173,19 +209,12 @@
     },
     "answer_correct": {
       "only_embed": [
-        "q07",
         "q15",
-        "q45",
-        "q48"
+        "q45"
       ],
       "only_rerank": [
         "q02",
-        "q13",
-        "q17",
-        "q25",
-        "q26",
-        "q29",
-        "q34"
+        "q26"
       ]
     }
   },
@@ -256,32 +285,6 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 3,
-          "n": 7,
-          "rate": 0.42857142857142855
-        }
-      },
-      "rerank": {
-        "hit@5": {
-          "count": 7,
-          "n": 7,
-          "rate": 1.0
-        },
-        "answer_correct": {
-          "count": 2,
-          "n": 7,
-          "rate": 0.2857142857142857
-        }
-      }
-    },
-    "full_text": {
-      "embed": {
-        "hit@5": {
-          "count": 7,
-          "n": 7,
-          "rate": 1.0
-        },
-        "answer_correct": {
           "count": 4,
           "n": 7,
           "rate": 0.5714285714285714
@@ -294,9 +297,35 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 6,
+          "count": 4,
           "n": 7,
-          "rate": 0.8571428571428571
+          "rate": 0.5714285714285714
+        }
+      }
+    },
+    "full_text": {
+      "embed": {
+        "hit@5": {
+          "count": 7,
+          "n": 7,
+          "rate": 1.0
+        },
+        "answer_correct": {
+          "count": 7,
+          "n": 7,
+          "rate": 1.0
+        }
+      },
+      "rerank": {
+        "hit@5": {
+          "count": 7,
+          "n": 7,
+          "rate": 1.0
+        },
+        "answer_correct": {
+          "count": 7,
+          "n": 7,
+          "rate": 1.0
         }
       }
     },
@@ -308,9 +337,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 2,
+          "count": 3,
           "n": 7,
-          "rate": 0.2857142857142857
+          "rate": 0.42857142857142855
         }
       },
       "rerank": {
@@ -320,9 +349,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 3,
+          "count": 4,
           "n": 7,
-          "rate": 0.42857142857142855
+          "rate": 0.5714285714285714
         }
       }
     },
@@ -334,9 +363,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 2,
+          "count": 5,
           "n": 5,
-          "rate": 0.4
+          "rate": 1.0
         }
       },
       "rerank": {
@@ -346,9 +375,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 3,
+          "count": 4,
           "n": 5,
-          "rate": 0.6
+          "rate": 0.8
         }
       }
     },
@@ -360,9 +389,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 6,
+          "count": 7,
           "n": 8,
-          "rate": 0.75
+          "rate": 0.875
         }
       },
       "rerank": {
@@ -372,9 +401,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 6,
+          "count": 7,
           "n": 8,
-          "rate": 0.75
+          "rate": 0.875
         }
       }
     },
@@ -386,9 +415,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 0,
+          "count": 2,
           "n": 4,
-          "rate": 0.0
+          "rate": 0.5
         }
       },
       "rerank": {
@@ -398,9 +427,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 1,
+          "count": 2,
           "n": 4,
-          "rate": 0.25
+          "rate": 0.5
         }
       }
     },
@@ -412,9 +441,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 15,
+          "count": 21,
           "n": 26,
-          "rate": 0.5769230769230769
+          "rate": 0.8076923076923077
         }
       },
       "rerank": {
@@ -424,9 +453,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 17,
+          "count": 22,
           "n": 26,
-          "rate": 0.6538461538461539
+          "rate": 0.8461538461538461
         }
       }
     },
@@ -438,9 +467,9 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 9,
+          "count": 10,
           "n": 11,
-          "rate": 0.8181818181818182
+          "rate": 0.9090909090909091
         }
       },
       "rerank": {
@@ -450,16 +479,33 @@
           "rate": 1.0
         },
         "answer_correct": {
-          "count": 8,
+          "count": 9,
           "n": 11,
-          "rate": 0.7272727272727273
+          "rate": 0.8181818181818182
         }
       }
     }
   },
-  "hand_vs_key_facts": {
-    "graded": 0,
-    "agree": 0,
-    "kappa": null
+  "graders": {
+    "hand_vs_key_facts": {
+      "graded": 91,
+      "agree": 74,
+      "kappa": 0.4667356084108928
+    },
+    "claude_vs_key_facts": {
+      "graded": 91,
+      "agree": 73,
+      "kappa": 0.46921581335061585
+    },
+    "hand_vs_claude": {
+      "graded": 102,
+      "agree": 94,
+      "kappa": 0.709505161979352
+    },
+    "hand_vs_claude_strict": {
+      "graded": 102,
+      "agree": 97,
+      "kappa": 0.8106904231625833
+    }
   }
 }
