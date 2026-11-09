@@ -23,7 +23,9 @@ from labelrag import config
 from labelrag.client import CachedCohere
 from labelrag.retrieve import TOP, Retriever, describe, print_retrieval
 
-PROMPT_VERSION = "answer_v1"
+# The prompt in use. answer_v1 was the baseline; v2 and v3 came from its graded failures, and
+# each run in results/ records the version it used.
+PROMPT_VERSION = "answer_v3"
 DECLINE = "The provided label excerpts don't answer this question."
 TEMPERATURE = 0.0
 SEED = 7

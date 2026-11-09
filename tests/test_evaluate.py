@@ -310,6 +310,18 @@ def test_a_new_prompt_reuses_retrieval_carries_grades_and_compares(world, tmp_pa
     assert "| hand grades | embed | 2 | 0 | 0.500 | none | q01, q02 |" in text
 
 
+def test_a_run_isnt_rerun_with_a_different_prompt(world, tmp_path, monkeypatch, capsys):
+    run(world)
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "other.md").write_text("Another prompt.", encoding="utf-8")
+    monkeypatch.setattr(config, "PROMPTS_DIR", prompts)
+    calls = len(world[1].requests)
+    assert evaluate.main(["--run", "test", "--prompt", "other"], client=world[0]) == 1
+    assert f"pass --prompt {answer.PROMPT_VERSION}" in capsys.readouterr().out
+    assert len(world[1].requests) == calls
+
+
 def test_an_unknown_prompt_stops_the_run(world, capsys):
     assert evaluate.main(["--run", "x", "--prompt", "nope"], client=world[0]) == 1
     assert "No prompt 'nope'" in capsys.readouterr().out

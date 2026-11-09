@@ -806,6 +806,14 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
     if not (config.PROMPTS_DIR / f"{args.prompt}.md").exists():
         print(f"No prompt {args.prompt!r}: expected {config.PROMPTS_DIR / args.prompt}.md")
         return 1
+    if (run_dir / "summary.json").exists():
+        used = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))["run"]
+        if used.get("prompt_version") != args.prompt:
+            print(
+                f"results/{args.run} was run with {used.get('prompt_version')}: pass --prompt "
+                f"{used.get('prompt_version')} to re-run it, or pick another run name."
+            )
+            return 1
 
     report = questions.validate()
     if report.errors:
