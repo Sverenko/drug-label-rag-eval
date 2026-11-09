@@ -4,6 +4,11 @@
     python -m labelrag.evaluate --run check --limit 2    # the first two, as a check
     python -m labelrag.evaluate --run baseline --regrade # re-score after grading
 
+A new prompt version reuses the cached retrieval, so only the answers are new calls:
+
+    python -m labelrag.evaluate --run prompt_v2 --prompt answer_v2
+        --grades-from baseline --compare baseline
+
 One retrieval per question gives the embedding-only and the reranked order of the same 50
 chunks, and Command answers twice, once from each top 5. Results go to results/<run>/:
 
@@ -146,6 +151,7 @@ def run_questions(
     client: CachedCohere,
     ingredients: dict[str, set[str]] | None = None,
     progress=print,
+    prompt_version: str = answering.PROMPT_VERSION,
 ) -> list[dict[str, Any]]:
     ingredients = ingredients or {}
     rows = []
@@ -156,7 +162,8 @@ def run_questions(
         for name in CONFIGS:
             ids = retrieval.rerank_ids if name == "rerank" else retrieval.embed_ids
             scores = retrieval.rerank_scores if name == "rerank" else retrieval.embed_scores
-            ans = answering.answer(client, q["question"], [retriever.chunks[c] for c in ids[:TOP]])
+            context = [retriever.chunks[c] for c in ids[:TOP]]
+            ans = answering.answer(client, q["question"], context, prompt_version=prompt_version)
             timings = {
                 "embed_query": retrieval.timings_ms["embed_query"],
                 "vector_search": retrieval.timings_ms["vector_search"],
@@ -598,11 +605,36 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def carry_grades(hand: dict, other: dict, source: str) -> dict:
+    """Grades from another run's sheet for identical answers to the same question, where this
+    run has none yet. The same answer to the same question earns the same grade; the comment
+    says where it came from."""
+    merged = dict(hand)
+    for key, theirs in other.items():
+        if any(grade(merged.get(key, {}).get(column)) for column in GRADERS):
+            continue
+        carried = dict.fromkeys(GRADE_FIELDS, "")
+        for column, comment in (("hand_correct", "comment"), ("claude_correct", "claude_comment")):
+            if grade(theirs.get(column)):
+                carried[column] = theirs[column]
+                carried[comment] = f"{theirs.get(comment, '')} Same answer as in {source}.".strip()
+        if any(carried.values()):
+            merged[key] = carried
+    return merged
+
+
 def write_report(
-    run_dir: Path, rows: list[dict[str, Any]], qs: list[dict[str, Any]], meta: dict[str, Any]
+    run_dir: Path,
+    rows: list[dict[str, Any]],
+    qs: list[dict[str, Any]],
+    meta: dict[str, Any],
+    grades_from: str | None = None,
 ) -> tuple[str, int]:
     """Score the rows with the grades on file and write the summary and grading sheet."""
     hand = read_hand_grades(run_dir / "grades.csv")
+    if grades_from:
+        other = read_hand_grades(config.RESULTS_DIR / grades_from / "grades.csv")
+        hand = carry_grades(hand, other, grades_from)
     summary = summarize(rows, qs, meta, hand)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     text = markdown(summary)
@@ -610,19 +642,128 @@ def write_report(
     return text, write_grades(rows, qs, run_dir / "grades.csv", hand)
 
 
-def regrade(run_dir: Path) -> int:
+def load_run(run_dir: Path) -> tuple[list[dict[str, Any]], dict, dict[str, Any]]:
+    lines = (run_dir / "rows.jsonl").read_text(encoding="utf-8").splitlines()
+    rows = [json.loads(line) for line in lines if line.strip()]
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    return rows, read_hand_grades(run_dir / "grades.csv"), summary
+
+
+def run_grades(rows: list[dict[str, Any]], hand: dict, column: str) -> dict:
+    """One grader's grade for each answerable (question, configuration), or None."""
+    return {
+        (r["id"], r["config"]): grade(hand.get((r["id"], r["answer"]), {}).get(column))
+        for r in rows
+        if r["answerable"]
+    }
+
+
+def compare(base_dir: Path, new_dir: Path) -> str:
+    """Two runs of the same questions side by side. Each grader's answer grades are compared,
+    with McNemar's test and the questions that changed, once both runs are fully graded."""
+    (rows_a, hand_a, sum_a), (rows_b, hand_b, sum_b) = load_run(base_dir), load_run(new_dir)
+    a, b = base_dir.name, new_dir.name
+    by_a = {(r["id"], r["config"]): r for r in rows_a}
+    by_b = {(r["id"], r["config"]): r for r in rows_b}
+    keys = [k for k in by_a if k in by_b]
+    same = all(by_a[k]["retrieved"] == by_b[k]["retrieved"] for k in keys)
+    ma, mb = sum_a["metrics"], sum_b["metrics"]
+
+    def row(label: str, cells: list[dict[str, Any]]) -> str:
+        return f"| {label} | " + " | ".join(fmt(cell) for cell in cells) + " |"
+
+    def summary_row(label: str, key: str) -> str:
+        return row(label, [m[c][key] for c in CONFIGS for m in (ma, mb)])
+
+    lines = [
+        f"# {b} vs {a}",
+        "",
+        f"Prompt `{sum_a['run']['prompt_version']}` in {a}, `{sum_b['run']['prompt_version']}` "
+        f"in {b}; {len({i for i, _ in keys})} questions. "
+        + (
+            "Retrieval is identical, so only the answers differ."
+            if same
+            else "Retrieval differs between the runs."
+        ),
+        "",
+        f"| | {a}, embed | {b}, embed | {a}, rerank | {b}, rerank |",
+        "|---|---|---|---|---|",
+    ]
+    tests, notes = [], []
+    for column, label in (("hand_correct", "hand grades"), ("claude_correct", "Claude's grades")):
+        ga, gb = run_grades(rows_a, hand_a, column), run_grades(rows_b, hand_b, column)
+        answerable = [k for k in keys if k in ga and k in gb]
+        if not all(ga[k] and gb[k] for k in answerable):
+            done = [sum(bool(g[k]) for k in answerable) for g in (ga, gb)]
+            notes.append(
+                f"Answer correct by {label} is compared once both runs are fully graded "
+                f"({done[0]} and {done[1]} of {len(answerable)} answers so far)."
+            )
+            continue
+        cells = []
+        for c in CONFIGS:
+            ids = [i for i, config_name in answerable if config_name == c]
+            right_a, right_b = [ga[(i, c)] == "y" for i in ids], [gb[(i, c)] == "y" for i in ids]
+            cells += [rate(right_a), rate(right_b)]
+            fixed = [i for i, x, y in zip(ids, right_a, right_b, strict=True) if y and not x]
+            broke = [i for i, x, y in zip(ids, right_a, right_b, strict=True) if x and not y]
+            tests.append((label, c, mcnemar(right_a, right_b), fixed, broke))
+        lines.append(row(f"Answer correct ({label})", cells))
+    lines += [
+        summary_row("Answer has every key fact (automatic)", "answer_has_key_facts"),
+        summary_row("Citations that contain the answer", "citations_contain_answer"),
+        summary_row("Answers that cited nothing", "uncited_answers"),
+        summary_row("Unanswerable questions declined", "unanswerable_declined"),
+        summary_row("Answerable questions wrongly declined", "answerable_declined"),
+    ]
+    if tests:
+        lines += [
+            "",
+            f"McNemar's exact test, {a} vs {b}, on the same questions:",
+            "",
+            f"| Grades | Configuration | Only {a} right | Only {b} right | p | "
+            f"Right only in {b} | Right only in {a} |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for label, c, test, fixed, broke in tests:
+            lines.append(
+                f"| {label} | {c} | {test['only_embed']} | {test['only_rerank']} | "
+                f"{test['p_value']:.3f} | {', '.join(fixed) or 'none'} | "
+                f"{', '.join(broke) or 'none'} |"
+            )
+    generate = [s["latency_ms"]["generate"]["p50"] for s in (sum_a, sum_b)]
+    if all(p is not None for p in generate):
+        notes.append(
+            f"Generating an answer took {generate[0]:,.0f} ms at the median in {a} and "
+            f"{generate[1]:,.0f} ms in {b} (rerank pipeline)."
+        )
+    if notes:
+        lines += ["", *notes]
+    return "\n".join(lines) + "\n"
+
+
+def write_comparison(base_dir: Path, new_dir: Path) -> str:
+    if not (base_dir / "rows.jsonl").exists():
+        return f"No finished run in {base_dir} to compare with."
+    text = compare(base_dir, new_dir)
+    (new_dir / f"vs_{base_dir.name}.md").write_text(text, encoding="utf-8")
+    return text
+
+
+def regrade(run_dir: Path, grades_from: str | None = None, compare_with: str | None = None) -> int:
     """Re-score a finished run from its saved rows, after grading: no retrieval, no calls."""
     if not (run_dir / "rows.jsonl").exists():
         print(f"No finished run in {run_dir}; run it first without --regrade.")
         return 1
-    lines = (run_dir / "rows.jsonl").read_text(encoding="utf-8").splitlines()
-    rows = [json.loads(line) for line in lines if line.strip()]
-    meta = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))["run"]
+    rows, _, summary = load_run(run_dir)
     ids = {r["id"] for r in rows}
     qs = [q for q in load_questions() if q["id"] in ids]
-    text, sheet = write_report(run_dir, rows, qs, meta)
+    text, sheet = write_report(run_dir, rows, qs, summary["run"], grades_from)
     print(text)
     print(f"Re-scored results/{run_dir.name}/ from rows.jsonl ({sheet} distinct answers).")
+    if compare_with:
+        print()
+        print(write_comparison(config.RESULTS_DIR / compare_with, run_dir))
     return 0
 
 
@@ -643,9 +784,28 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
         action="store_true",
         help="re-score the run's saved rows with the current grades, without running anything",
     )
+    parser.add_argument(
+        "--prompt",
+        default=answering.PROMPT_VERSION,
+        help="the answer prompt, a file in prompts/ named without .md",
+    )
+    parser.add_argument(
+        "--grades-from",
+        metavar="RUN",
+        help="copy grades from another run where the answer to a question is identical",
+    )
+    parser.add_argument(
+        "--compare",
+        metavar="RUN",
+        help="compare with another run of the same questions, in results/<run>/vs_<RUN>.md",
+    )
     args = parser.parse_args(argv)
+    run_dir = config.RESULTS_DIR / args.run
     if args.regrade:
-        return regrade(config.RESULTS_DIR / args.run)
+        return regrade(run_dir, args.grades_from, args.compare)
+    if not (config.PROMPTS_DIR / f"{args.prompt}.md").exists():
+        print(f"No prompt {args.prompt!r}: expected {config.PROMPTS_DIR / args.prompt}.md")
+        return 1
 
     report = questions.validate()
     if report.errors:
@@ -661,9 +821,8 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
         row["set_id"]: questions.ingredient_words(row["generic_name"])
         for row in fetch.read_manifest(config.MANIFEST)
     }
-    rows = run_questions(qs, retriever, client, ingredients)
+    rows = run_questions(qs, retriever, client, ingredients, prompt_version=args.prompt)
 
-    run_dir = config.RESULTS_DIR / args.run
     run_dir.mkdir(parents=True, exist_ok=True)
     with (run_dir / "rows.jsonl").open("w", encoding="utf-8", newline="\n") as f:
         for row in rows:
@@ -671,7 +830,7 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
     meta = {
         "name": args.run,
         "finished": stamp(utc_now()),
-        "prompt_version": answering.PROMPT_VERSION,
+        "prompt_version": args.prompt,
         "models": {
             "embed_documents": config.EMBED_DOC_MODEL,
             "embed_queries": config.EMBED_QUERY_MODEL,
@@ -682,11 +841,14 @@ def main(argv: list[str] | None = None, client: CachedCohere | None = None) -> i
         "index_built_at": retriever.index.meta.get("built_at"),
         "new_api_calls": dict(client.calls),
     }
-    text, sheet = write_report(run_dir, rows, qs, meta)
+    text, sheet = write_report(run_dir, rows, qs, meta, args.grades_from)
     print()
     print(text)
     files = "rows.jsonl, summary.json, summary.md, grades.csv"
     print(f"Wrote results/{args.run}/: {files} ({sheet} distinct answers to grade)")
+    if args.compare:
+        print()
+        print(write_comparison(config.RESULTS_DIR / args.compare, run_dir))
     print(client.summary())
     return 0
 

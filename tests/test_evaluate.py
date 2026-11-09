@@ -255,6 +255,66 @@ def test_regrade_rescores_the_saved_rows_without_running_anything(world):
         assert m["answer_correct"]["count"] == 1 and m["answer_partial"]["count"] == 1
 
 
+def edit_sheet(path, update):
+    with path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    for row in rows:
+        update(row)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=evaluate.GRADE_COLUMNS, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_a_new_prompt_reuses_retrieval_carries_grades_and_compares(world, tmp_path, monkeypatch):
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / f"{answer.PROMPT_VERSION}.md").write_text("Answer.", encoding="utf-8")
+    (prompts / "strict.md").write_text("Decline everything.", encoding="utf-8")
+    monkeypatch.setattr(config, "PROMPTS_DIR", prompts)
+    _, sdk, _, first_dir = world
+
+    def by_prompt(messages, documents):
+        if "Decline everything" in messages[0].content:
+            return answer.DECLINE
+        return reply(messages, documents)
+
+    sdk.answer = by_prompt
+    run(world)
+    grade_sheet(world, u01={"hand_correct": "y", "claude_correct": "y"})
+    before = [endpoint for endpoint, _ in sdk.requests]
+    args = ["--run", "strict", "--prompt", "strict", "--grades-from", "test", "--compare", "test"]
+    assert evaluate.main(args, client=world[0]) == 0
+    after = [endpoint for endpoint, _ in sdk.requests]
+    assert after.count("chat") == before.count("chat") + 6  # only the answers are new
+    assert after.count("rerank") == before.count("rerank")  # retrieval came from the cache
+
+    new_dir = config.RESULTS_DIR / "strict"
+    lines = (new_dir / "rows.jsonl").read_text(encoding="utf-8").splitlines()
+    assert all(json.loads(line)["prompt_version"] == "strict" for line in lines)
+    with (new_dir / "grades.csv").open(newline="", encoding="utf-8") as f:
+        sheet = {row["id"]: row for row in csv.DictReader(f)}
+    assert sheet["u01"]["hand_correct"] == "y"  # the same decline as before
+    assert "Same answer as in test" in sheet["u01"]["comment"]
+    assert sheet["q01"]["hand_correct"] == ""  # a different answer isn't carried over
+    text = (new_dir / "vs_test.md").read_text(encoding="utf-8")
+    assert "Retrieval is identical" in text and "once both runs are fully graded" in text
+
+    def grade_all(verdict):
+        return lambda row: row.update(hand_correct=verdict) if row["answerable"] == "yes" else None
+
+    edit_sheet(first_dir / "grades.csv", grade_all("y"))
+    edit_sheet(new_dir / "grades.csv", grade_all("n"))
+    assert evaluate.main(["--run", "strict", "--regrade", "--compare", "test"]) == 0
+    text = (new_dir / "vs_test.md").read_text(encoding="utf-8")
+    assert "| hand grades | embed | 2 | 0 | 0.500 | none | q01, q02 |" in text
+
+
+def test_an_unknown_prompt_stops_the_run(world, capsys):
+    assert evaluate.main(["--run", "x", "--prompt", "nope"], client=world[0]) == 1
+    assert "No prompt 'nope'" in capsys.readouterr().out
+
+
 def test_regrade_needs_a_finished_run(world, capsys):
     assert evaluate.main(["--run", "missing", "--regrade"]) == 1
     assert "run it first" in capsys.readouterr().out
