@@ -1,0 +1,158 @@
+{
+  "name": "no_header",
+  "finished": "2026-11-09T04:36:50",
+  "settings": {
+    "query_model": "embed-v5.0-fast",
+    "rerank_model": "rerank-v5.0-pro",
+    "rerank": true,
+    "with_header": false,
+    "baseline": "baseline"
+  },
+  "questions": 50,
+  "hits": {
+    "embed hit@1": {
+      "baseline": {
+        "count": 36,
+        "n": 50,
+        "rate": 0.72
+      },
+      "no_header": {
+        "count": 35,
+        "n": 50,
+        "rate": 0.7
+      }
+    },
+    "embed hit@5": {
+      "baseline": {
+        "count": 49,
+        "n": 50,
+        "rate": 0.98
+      },
+      "no_header": {
+        "count": 48,
+        "n": 50,
+        "rate": 0.96
+      }
+    },
+    "embed hit@50": {
+      "baseline": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      },
+      "no_header": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      }
+    },
+    "rerank hit@1": {
+      "baseline": {
+        "count": 40,
+        "n": 50,
+        "rate": 0.8
+      },
+      "no_header": {
+        "count": 39,
+        "n": 50,
+        "rate": 0.78
+      }
+    },
+    "rerank hit@5": {
+      "baseline": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      },
+      "no_header": {
+        "count": 48,
+        "n": 50,
+        "rate": 0.96
+      }
+    }
+  },
+  "mcnemar": {
+    "embed hit@1": {
+      "only_baseline": [
+        "q08",
+        "q19",
+        "q31",
+        "q46"
+      ],
+      "only_experiment": [
+        "q10",
+        "q39",
+        "q42"
+      ],
+      "p_value": 1.0
+    },
+    "embed hit@5": {
+      "only_baseline": [
+        "q31"
+      ],
+      "only_experiment": [],
+      "p_value": 1.0
+    },
+    "rerank hit@1": {
+      "only_baseline": [
+        "q26",
+        "q37",
+        "q46"
+      ],
+      "only_experiment": [
+        "q10",
+        "q38"
+      ],
+      "p_value": 1.0
+    },
+    "rerank hit@5": {
+      "only_baseline": [
+        "q26",
+        "q31"
+      ],
+      "only_experiment": [],
+      "p_value": 0.5
+    }
+  },
+  "latency_ms": {
+    "embed_query": {
+      "baseline": {
+        "p50": 82.36559992656112,
+        "p95": 108.6501700105145,
+        "n": 50
+      },
+      "no_header": {
+        "p50": 82.36559992656112,
+        "p95": 108.6501700105145,
+        "n": 50
+      }
+    },
+    "vector_search": {
+      "baseline": {
+        "p50": 0.41610002517700195,
+        "p95": 0.517329981084913,
+        "n": 50
+      },
+      "no_header": {
+        "p50": 1.0847500525414944,
+        "p95": 1.1915050446987152,
+        "n": 50
+      }
+    },
+    "rerank": {
+      "baseline": {
+        "p50": 373.78469994291663,
+        "p95": 452.7938299928792,
+        "n": 50
+      },
+      "no_header": {
+        "p50": 361.74289998598397,
+        "p95": 438.2380600902252,
+        "n": 50
+      }
+    }
+  },
+  "new_api_calls": {
+    "rerank": 50
+  }
+}

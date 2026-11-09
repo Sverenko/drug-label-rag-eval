@@ -1,0 +1,148 @@
+{
+  "name": "rerank_fast",
+  "finished": "2026-11-09T03:56:45",
+  "settings": {
+    "query_model": "embed-v5.0-fast",
+    "rerank_model": "rerank-v5.0-fast",
+    "rerank": true,
+    "with_header": true,
+    "baseline": "baseline"
+  },
+  "questions": 50,
+  "hits": {
+    "embed hit@1": {
+      "baseline": {
+        "count": 36,
+        "n": 50,
+        "rate": 0.72
+      },
+      "rerank_fast": {
+        "count": 36,
+        "n": 50,
+        "rate": 0.72
+      }
+    },
+    "embed hit@5": {
+      "baseline": {
+        "count": 49,
+        "n": 50,
+        "rate": 0.98
+      },
+      "rerank_fast": {
+        "count": 49,
+        "n": 50,
+        "rate": 0.98
+      }
+    },
+    "embed hit@50": {
+      "baseline": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      },
+      "rerank_fast": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      }
+    },
+    "rerank hit@1": {
+      "baseline": {
+        "count": 40,
+        "n": 50,
+        "rate": 0.8
+      },
+      "rerank_fast": {
+        "count": 41,
+        "n": 50,
+        "rate": 0.82
+      }
+    },
+    "rerank hit@5": {
+      "baseline": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      },
+      "rerank_fast": {
+        "count": 49,
+        "n": 50,
+        "rate": 0.98
+      }
+    }
+  },
+  "mcnemar": {
+    "embed hit@1": {
+      "only_baseline": [],
+      "only_experiment": [],
+      "p_value": 1.0
+    },
+    "embed hit@5": {
+      "only_baseline": [],
+      "only_experiment": [],
+      "p_value": 1.0
+    },
+    "rerank hit@1": {
+      "only_baseline": [
+        "q05",
+        "q07",
+        "q16"
+      ],
+      "only_experiment": [
+        "q01",
+        "q10",
+        "q20",
+        "q38"
+      ],
+      "p_value": 1.0
+    },
+    "rerank hit@5": {
+      "only_baseline": [
+        "q05"
+      ],
+      "only_experiment": [],
+      "p_value": 1.0
+    }
+  },
+  "latency_ms": {
+    "embed_query": {
+      "baseline": {
+        "p50": 82.36559992656112,
+        "p95": 108.6501700105145,
+        "n": 50
+      },
+      "rerank_fast": {
+        "p50": 82.36559992656112,
+        "p95": 108.6501700105145,
+        "n": 50
+      }
+    },
+    "vector_search": {
+      "baseline": {
+        "p50": 0.41610002517700195,
+        "p95": 0.517329981084913,
+        "n": 50
+      },
+      "rerank_fast": {
+        "p50": 1.0753498645499349,
+        "p95": 1.180514961015433,
+        "n": 50
+      }
+    },
+    "rerank": {
+      "baseline": {
+        "p50": 373.78469994291663,
+        "p95": 452.7938299928792,
+        "n": 50
+      },
+      "rerank_fast": {
+        "p50": 262.6934499712661,
+        "p95": 364.245540020056,
+        "n": 50
+      }
+    }
+  },
+  "new_api_calls": {
+    "rerank": 50
+  }
+}

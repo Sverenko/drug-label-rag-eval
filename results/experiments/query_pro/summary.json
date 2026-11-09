@@ -1,0 +1,98 @@
+{
+  "name": "query_pro",
+  "finished": "2026-11-09T03:44:44",
+  "settings": {
+    "query_model": "embed-v5.0-pro",
+    "rerank_model": "rerank-v5.0-pro",
+    "rerank": false,
+    "with_header": true,
+    "baseline": "baseline"
+  },
+  "questions": 50,
+  "hits": {
+    "embed hit@1": {
+      "baseline": {
+        "count": 36,
+        "n": 50,
+        "rate": 0.72
+      },
+      "query_pro": {
+        "count": 37,
+        "n": 50,
+        "rate": 0.74
+      }
+    },
+    "embed hit@5": {
+      "baseline": {
+        "count": 49,
+        "n": 50,
+        "rate": 0.98
+      },
+      "query_pro": {
+        "count": 48,
+        "n": 50,
+        "rate": 0.96
+      }
+    },
+    "embed hit@50": {
+      "baseline": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      },
+      "query_pro": {
+        "count": 50,
+        "n": 50,
+        "rate": 1.0
+      }
+    }
+  },
+  "mcnemar": {
+    "embed hit@1": {
+      "only_baseline": [
+        "q31"
+      ],
+      "only_experiment": [
+        "q39",
+        "q42"
+      ],
+      "p_value": 1.0
+    },
+    "embed hit@5": {
+      "only_baseline": [
+        "q07"
+      ],
+      "only_experiment": [],
+      "p_value": 1.0
+    }
+  },
+  "latency_ms": {
+    "embed_query": {
+      "baseline": {
+        "p50": 82.36559992656112,
+        "p95": 108.6501700105145,
+        "n": 50
+      },
+      "query_pro": {
+        "p50": 94.32790009304881,
+        "p95": 105.74193006614223,
+        "n": 50
+      }
+    },
+    "vector_search": {
+      "baseline": {
+        "p50": 0.41610002517700195,
+        "p95": 0.517329981084913,
+        "n": 50
+      },
+      "query_pro": {
+        "p50": 1.0284000309184194,
+        "p95": 1.187224907334894,
+        "n": 50
+      }
+    }
+  },
+  "new_api_calls": {
+    "embed": 50
+  }
+}
