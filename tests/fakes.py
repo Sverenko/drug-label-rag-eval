@@ -4,6 +4,8 @@ import re
 import zlib
 from types import SimpleNamespace as NS
 
+from labelrag import answer
+
 
 class FakeClock:
     """A clock that only moves when something sleeps or a fake call takes time."""
@@ -93,3 +95,11 @@ class FakeSDK:
             citations = [NS(start=0, end=len(text), text=text, sources=[source])]
         message = NS(content=[NS(type="text", text=text)], citations=citations)
         return NS(message=message, finish_reason="COMPLETE", usage=None)
+
+
+def reply(messages, documents):
+    """Fake Command for the eval tests: declines price questions, otherwise answers with
+    every chunk's text."""
+    if "cost" in messages[-1].content:
+        return answer.DECLINE
+    return " ".join(d.data["text"] for d in documents)

@@ -14,6 +14,7 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -53,9 +54,11 @@ class Retriever:
         self.client, self.index, self.chunks, self.clock = client, idx, chunks, clock
 
     @classmethod
-    def load(cls, client: CachedCohere | None = None) -> "Retriever":
-        """The saved index and chunks, checked against the config by index.load()."""
-        idx = index.load()
+    def load(
+        cls, client: CachedCohere | None = None, index_path: Path | None = None
+    ) -> "Retriever":
+        """The saved index (data/index/ unless given) and chunks, checked by index.load()."""
+        idx = index.load(index_path)
         chunks = {c["chunk_id"]: c for c in chunk.load_chunks()}
         return cls(client or CachedCohere(), idx, chunks)
 
@@ -65,7 +68,12 @@ class Retriever:
         pool: int = POOL,
         query_model: str | None = None,
         rerank_model: str | None = None,
+        rerank: bool = True,
+        with_header: bool = True,
     ) -> Retrieval:
+        """The pool nearest by embedding, then reranked unless rerank is False (the reranked
+        order is then empty). Rerank reads each chunk with its header unless with_header
+        is False."""
         query = self.client.embed(
             [question],
             model=query_model or config.EMBED_QUERY_MODEL,
@@ -82,7 +90,18 @@ class Retriever:
         search_ms = (self.clock() - start) * 1000
 
         embed_ids = [self.index.chunk_ids[i] for i in nearest]
-        documents = [chunk.embed_text(self.chunks[cid]) for cid in embed_ids]
+        embed_scores = [float(scores[i]) for i in nearest]
+        if not rerank:
+            return Retrieval(
+                question=question,
+                embed_ids=embed_ids,
+                embed_scores=embed_scores,
+                rerank_ids=[],
+                rerank_scores=[],
+                timings_ms={"embed_query": query.latency_ms[0], "vector_search": search_ms},
+                cached={"embed_query": query.cached[0]},
+            )
+        documents = [chunk.embed_text(self.chunks[cid], with_header) for cid in embed_ids]
         reranked = self.client.rerank(
             question,
             documents,
@@ -92,7 +111,7 @@ class Retriever:
         return Retrieval(
             question=question,
             embed_ids=embed_ids,
-            embed_scores=[float(scores[i]) for i in nearest],
+            embed_scores=embed_scores,
             rerank_ids=[embed_ids[i] for i in reranked.order],
             rerank_scores=reranked.scores,
             timings_ms={
